@@ -5,7 +5,7 @@
 1. **连点**：设定点击次数后，在游戏里手动点 1 次，自动补点到设定次数；支持 Pointer / 鼠标 / 触摸 / 真实输入（调试器）。
 2. **网络场景**：一键模拟 正常 / 弱网 / 断网 / 自定义（WS 延迟、丢包、HTTP 延迟）。
 
-插件基于 Chrome / Edge 扩展（Manifest V3），默认不显示面板，通过浏览器扩展图标、`Alt+G` 或 `F8` 唤起。
+插件面板底部带「检查更新」按钮，可直接查询本仓库版本并提示升级。插件基于 Chrome / Edge 扩展（Manifest V3），默认不显示面板，通过浏览器扩展图标、`Alt+G` 或 `F8` 唤起。
 
 ![面板预览](extension/docs/preview.jpg)
 
@@ -57,7 +57,7 @@ launcher/update.ps1  → 比较版本 → 下载 dist/game-tool-extension.zip �
 
 ```json
 {
-  "version": "1.3.3",
+  "version": "1.4.0",
   "zipUrl": "https://raw.githubusercontent.com/vibewei/game-tool-extension/main/dist/game-tool-extension.zip",
   "pageUrl": "https://github.com/vibewei/game-tool-extension"
 }

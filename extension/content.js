@@ -11,7 +11,7 @@
   const STORAGE_KEY = 'gameToolSettings';
   const POSITION_KEY = 'gameToolPanelPosition';
   const RESTORE_POSITION_KEY = 'gameToolRestorePosition';
-  const VERSION = '1.3.3';
+  const VERSION = '1.4.0';
 
   const settings = {
     clickEnabled: false,
@@ -95,6 +95,15 @@
     .gt-apply { all: unset; cursor: pointer; display: block; width: 100%; text-align: center; margin-top: 6px; padding: 6px 0; border-radius: 6px; background: rgba(79,140,255,0.22); color: #9dc0ff; font-size: 12px; }
     .gt-apply:hover { background: rgba(79,140,255,0.34); }
     .gt-foot { margin-top: 6px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 10px; color: #737a87; line-height: 1.5; }
+    .gt-foot-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .gt-update-btn { all: unset; cursor: pointer; font-size: 10.5px; color: #9dc0ff; padding: 2px 7px; border-radius: 5px; background: rgba(79,140,255,0.14); white-space: nowrap; }
+    .gt-update-btn:hover { background: rgba(79,140,255,0.26); }
+    .gt-update-btn:disabled { opacity: 0.55; cursor: default; }
+    .gt-update-status { display: none; margin-top: 4px; font-size: 10.5px; line-height: 1.5; word-break: break-all; }
+    .gt-update-status.show { display: block; }
+    .gt-update-status.ok { color: #63e6a4; }
+    .gt-update-status.new { color: #f4c15a; }
+    .gt-update-status.err { color: #ff8a8a; }
     .gt-restore { all: unset; position: fixed; right: 14px; top: 90px; z-index: 2147483647; height: 34px; padding: 0 12px 0 10px; display: none; align-items: center; gap: 6px; border-radius: 17px; background: linear-gradient(180deg, rgba(38,43,54,0.97), rgba(24,27,34,0.97)); border: 1px solid rgba(255,255,255,0.24); color: #e8eaed; cursor: grab; box-shadow: 0 8px 22px rgba(0,0,0,0.45); font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; user-select: none; touch-action: none; }
     .gt-restore.show { display: inline-flex; }
     .gt-restore:hover { border-color: rgba(255,255,255,0.42); background: linear-gradient(180deg, rgba(48,54,66,0.98), rgba(30,34,42,0.98)); }
@@ -160,7 +169,14 @@
             </div>
             <div class="gt-tip" id="gt-net-status">当前网络：正常</div>
           </div>
-          <div class="gt-foot">游戏助手 v${VERSION} · F8 隐藏面板 · F7 开关连点 · 仅作用于当前页面</div>
+          <div class="gt-foot">
+            <div class="gt-foot-row">
+              <span>游戏助手 v${VERSION}</span>
+              <button class="gt-update-btn" id="gt-check-update" title="从代码仓库检查更新">检查更新</button>
+            </div>
+            <div class="gt-update-status" id="gt-update-status"></div>
+            <div>F8 隐藏面板 · F7 开关连点 · 仅作用于当前页面</div>
+          </div>
         </div>
       </div>
       <button class="gt-restore" id="gt-restore" title="展开游戏助手（可以拖动）">
@@ -413,6 +429,8 @@
       applyCustom: shadow.getElementById('gt-apply-custom'),
       netStatus: shadow.getElementById('gt-net-status'),
       conn: shadow.getElementById('gt-conn'),
+      checkUpdate: shadow.getElementById('gt-check-update'),
+      updateStatus: shadow.getElementById('gt-update-status'),
     };
 
     // 面板自身事件不传给游戏，也不触发连点
@@ -498,6 +516,61 @@
 
     // 收起 / 展开（悬浮胶囊的展开逻辑在 pointerup 里处理，拖动时不会误触展开）
     refs.min.addEventListener('click', () => setPanelHidden(true));
+
+    // 检查更新：从代码仓库读取 version.json，比较版本号
+    let pendingUpdateUrl = '';
+    const showUpdateStatus = (text, level) => {
+      if (!refs.updateStatus) return;
+      refs.updateStatus.textContent = text || '';
+      refs.updateStatus.className = 'gt-update-status' + (text ? ' show' : '') + (level ? ' ' + level : '');
+    };
+    const runUpdateCheck = () => {
+      if (pendingUpdateUrl) {
+        try {
+          chrome.runtime.sendMessage({ __gameToolBg: true, type: 'openUpdatePage', url: pendingUpdateUrl }, (result) => {
+            if (chrome.runtime.lastError) showUpdateStatus('打开更新页失败：' + chrome.runtime.lastError.message, 'err');
+            else if (result && result.ok === false) showUpdateStatus('打开更新页失败：' + (result.error || '未知错误'), 'err');
+          });
+        } catch (e) {
+          showUpdateStatus('打开更新页失败：' + e.message, 'err');
+        }
+        return;
+      }
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+        showUpdateStatus('检查更新需要在扩展环境使用', 'err');
+        return;
+      }
+      refs.checkUpdate.disabled = true;
+      refs.checkUpdate.textContent = '检查中…';
+      showUpdateStatus('', '');
+      try {
+        chrome.runtime.sendMessage({ __gameToolBg: true, type: 'checkUpdate' }, (result) => {
+          refs.checkUpdate.disabled = false;
+          refs.checkUpdate.textContent = '检查更新';
+          if (chrome.runtime.lastError) {
+            showUpdateStatus('检查失败：' + chrome.runtime.lastError.message, 'err');
+            return;
+          }
+          if (!result || result.error) {
+            showUpdateStatus('检查失败：' + ((result && result.error) || '无响应'), 'err');
+            return;
+          }
+          if (result.hasUpdate) {
+            pendingUpdateUrl = result.pageUrl || '';
+            if (pendingUpdateUrl) refs.checkUpdate.textContent = '打开更新页';
+            showUpdateStatus(`发现新版本 v${result.latest}（当前 v${result.current}）。自动更新请用启动器；手动更新请用新包覆盖后重新加载扩展。`, 'new');
+          } else {
+            pendingUpdateUrl = '';
+            showUpdateStatus(`已是最新版本 v${result.current}`, 'ok');
+          }
+        });
+      } catch (e) {
+        refs.checkUpdate.disabled = false;
+        refs.checkUpdate.textContent = '检查更新';
+        showUpdateStatus('检查失败：' + e.message, 'err');
+      }
+    };
+    refs.checkUpdate.addEventListener('click', runUpdateCheck);
 
     // 拖动：整块面板都可拖（按钮/输入框等控件除外），并记住面板位置
     const getPositionBounds = () => {

@@ -114,3 +114,75 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch((error) => sendResponse({ ok: false, error: String((error && error.message) || error) }));
   return true;
 });
+
+// ---------------- 检查更新（代码仓库） ----------------
+const DEFAULT_UPDATE_VERSION_URL = 'https://raw.githubusercontent.com/vibewei/game-tool-extension/main/version.json';
+const DEFAULT_UPDATE_PAGE_URL = 'https://github.com/vibewei/game-tool-extension/releases/latest';
+
+function compareVersions(a, b) {
+  const pa = String(a || '0').split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || '0').split('.').map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i += 1) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+    if (da > db) return 1;
+    if (da < db) return -1;
+  }
+  return 0;
+}
+
+async function checkExtensionUpdate() {
+  const current = chrome.runtime.getManifest().version;
+  let config = {};
+  try {
+    const stored = await chrome.storage.local.get(['gameToolUpdateConfig']);
+    config = stored.gameToolUpdateConfig || {};
+  } catch (error) {
+    config = {};
+  }
+  const versionUrl = config.versionUrl || DEFAULT_UPDATE_VERSION_URL;
+  let pageUrl = config.pageUrl || DEFAULT_UPDATE_PAGE_URL;
+  try {
+    const response = await fetch(versionUrl, { cache: 'no-store' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const text = (await response.text()).trim();
+    let latest = '';
+    let zipUrl = '';
+    try {
+      const json = JSON.parse(text);
+      latest = String(json.version || '').trim();
+      if (json.pageUrl) pageUrl = String(json.pageUrl);
+      if (json.zipUrl) zipUrl = String(json.zipUrl);
+    } catch (error) {
+      latest = (text.split(/\s+/)[0] || '').replace(/^"|"$/g, '');
+    }
+    if (!latest) throw new Error('未读取到版本号');
+    return { current, latest, hasUpdate: compareVersions(latest, current) > 0, pageUrl, zipUrl };
+  } catch (error) {
+    return { current, error: String((error && error.message) || error) };
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.__gameToolBg !== true) return false;
+  if (message.type === 'checkUpdate') {
+    checkExtensionUpdate()
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ error: String((error && error.message) || error) }));
+    return true;
+  }
+  if (message.type === 'openUpdatePage') {
+    const url = String(message.url || '');
+    if (!/^https:\/\//i.test(url)) {
+      sendResponse({ ok: false, error: '地址不合法' });
+      return false;
+    }
+    chrome.tabs
+      .create({ url })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: String((error && error.message) || error) }));
+    return true;
+  }
+  return false;
+});

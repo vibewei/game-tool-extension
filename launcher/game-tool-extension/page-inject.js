@@ -14,8 +14,9 @@
   const BLOCK_URL = 'wss://127.0.0.1:1/__game-tool-offline__';
 
   const state = {
-    mode: 'normal', // normal | weak | offline | custom
+    mode: 'normal', // normal | weak | severe | jitter | loss | latency | offline | custom
     latencyMs: 0, // WS 单程延迟
+    jitterMs: 0, // WS 延迟抖动范围（±jitter）
     lossRate: 0, // WS 丢包率 0~1
     httpLatencyMs: 0,
     httpFailRate: 0,
@@ -50,7 +51,22 @@
     return value > 0 && Math.random() < Math.min(1, value);
   };
 
-  const currentLatency = () => (state.mode === 'normal' ? 0 : Math.max(0, Number(state.latencyMs) || 0));
+  const currentLatency = () => {
+    if (state.mode === 'normal') return 0;
+    const base = Math.max(0, Number(state.latencyMs) || 0);
+    const jitter = Math.max(0, Number(state.jitterMs) || 0);
+    if (jitter > 0) return Math.max(0, base + (Math.random() * 2 - 1) * jitter);
+    return base;
+  };
+
+  // HTTP 延迟也跟随抖动配置
+  const currentHttpDelay = () => {
+    if (state.mode === 'normal') return 0;
+    const base = Math.max(0, Number(state.httpLatencyMs) || 0);
+    const jitter = Math.max(0, Number(state.jitterMs) || 0);
+    if (base > 0 && jitter > 0) return Math.max(0, base + (Math.random() * 2 - 1) * jitter);
+    return base;
+  };
 
   const pushMessage = (direction, data) => {
     let preview = '';
@@ -67,6 +83,7 @@
   const getState = () => ({
     mode: state.mode,
     latencyMs: state.latencyMs,
+    jitterMs: state.jitterMs,
     lossRate: state.lossRate,
     httpLatencyMs: state.httpLatencyMs,
     httpFailRate: state.httpFailRate,
@@ -194,7 +211,7 @@
     window.fetch = function gameToolFetch(input, init) {
       const offline = state.mode === 'offline';
       const fail = offline || shouldDrop(state.httpFailRate);
-      const delay = Math.max(0, Number(state.httpLatencyMs) || 0);
+      const delay = currentHttpDelay();
       const run = () => {
         if (fail) return Promise.reject(new TypeError('Failed to fetch（游戏助手模拟网络异常）'));
         return nativeFetch.call(window, input, init);
@@ -211,7 +228,7 @@
     NativeXHR.prototype.send = function gameToolXhrSend(body) {
       const offline = state.mode === 'offline';
       const fail = offline || shouldDrop(state.httpFailRate);
-      const delay = Math.max(0, Number(state.httpLatencyMs) || 0);
+      const delay = currentHttpDelay();
       if (!offline && delay === 0 && !fail) return nativeXhrSend.call(this, body);
       setTimeout(() => {
         if (fail) {
@@ -238,6 +255,7 @@
     const prevMode = state.mode;
     state.mode = data.mode || 'normal';
     state.latencyMs = Math.max(0, Math.min(30000, Number(data.latencyMs) || 0));
+    state.jitterMs = Math.max(0, Math.min(30000, Number(data.jitterMs) || 0));
     state.lossRate = Math.min(1, Math.max(0, Number(data.lossRate) || 0));
     state.httpLatencyMs = Math.max(0, Math.min(30000, Number(data.httpLatencyMs) || 0));
     state.httpFailRate = Math.min(1, Math.max(0, Number(data.httpFailRate) || 0));

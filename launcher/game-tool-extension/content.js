@@ -11,21 +11,38 @@
   const STORAGE_KEY = 'gameToolSettings';
   const POSITION_KEY = 'gameToolPanelPosition';
   const RESTORE_POSITION_KEY = 'gameToolRestorePosition';
-  const VERSION = '1.4.0';
+  const VERSION = '1.5.0';
 
   const settings = {
     clickEnabled: false,
     clickCount: 5,
     clickIntervalMs: 350,
     replayMode: 'auto', // auto | pointer | mouse | touch | trusted
-    settingsVersion: 2,
+    showRestorePill: true,
+    settingsVersion: 3,
   };
+
+  // 网络场景预设（快捷键 Alt+Shift+1~8 对应前 8 个）
+  const NETWORK_PRESETS = [
+    { key: 'normal', label: '正常', mode: 'normal' },
+    { key: 'weak', label: '弱网', mode: 'weak', latencyMs: 1000, jitterMs: 0, lossRate: 0.1, httpLatencyMs: 1000 },
+    { key: 'severe', label: '强弱网', mode: 'severe', latencyMs: 3000, jitterMs: 0, lossRate: 0.3, httpLatencyMs: 3000 },
+    { key: 'jitter', label: '抖动', mode: 'jitter', latencyMs: 500, jitterMs: 800, lossRate: 0.02, httpLatencyMs: 500 },
+    { key: 'loss', label: '丢包', mode: 'loss', latencyMs: 100, jitterMs: 0, lossRate: 0.3, httpLatencyMs: 0 },
+    { key: 'latency', label: '高延迟', mode: 'latency', latencyMs: 2500, jitterMs: 0, lossRate: 0, httpLatencyMs: 2500 },
+    { key: 'offline', label: '断网', mode: 'offline' },
+    { key: 'offline10', label: '断网10s', mode: 'offline', durationMs: 10000 },
+    { key: 'custom', label: '自定义', mode: 'custom' },
+  ];
+  const PRESET_BY_KEY = new Map(NETWORK_PRESETS.map((preset) => [preset.key, preset]));
 
   let host = null;
   let shadow = null;
   let refs = {};
   let replayCount = 0;
   let currentMode = 'normal';
+  let currentPresetKey = 'normal';
+  let autoRestoreTimer = null;
   let dragging = null;
   let restoreDrag = null;
   let panelHidden = false;
@@ -111,6 +128,13 @@
     .gt-restore-icon { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; color: #63e6a4; flex: 0 0 auto; }
     .gt-restore-icon svg { width: 18px; height: 18px; display: block; }
     .gt-restore-text { font-size: 12px; letter-spacing: 0.5px; white-space: nowrap; }
+    .gt-restore-hide { all: unset; cursor: pointer; width: 18px; height: 18px; line-height: 16px; text-align: center; border-radius: 50%; color: #aab1bd; font-size: 13px; flex: 0 0 auto; background: rgba(255,255,255,0.1); }
+    .gt-restore-hide:hover { background: rgba(240,80,80,0.35); color: #fff; }
+    .gt-toast { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); z-index: 2147483647; max-width: 70vw; padding: 7px 14px; border-radius: 18px; background: rgba(24,27,34,0.95); border: 1px solid rgba(255,255,255,0.22); color: #e8eaed; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); display: none; white-space: nowrap; }
+    .gt-toast.show { display: block; }
+    .gt-switch-sm { width: 30px; height: 17px; }
+    .gt-switch-sm .gt-slider::before { width: 11px; height: 11px; }
+    .gt-switch-sm input:checked + .gt-slider::before { transform: translateX(13px); }
     .gt-hidden { display: none !important; }
   `;
 
@@ -156,13 +180,19 @@
               <span class="gt-small" id="gt-conn">WS: -</span>
             </div>
             <div class="gt-modes" id="gt-modes">
-              <button class="gt-mode active" data-mode="normal">正常</button>
-              <button class="gt-mode" data-mode="weak">弱网</button>
-              <button class="gt-mode" data-mode="offline">断网</button>
-              <button class="gt-mode" data-mode="custom">自定义</button>
+              <button class="gt-mode active" data-preset="normal">正常</button>
+              <button class="gt-mode" data-preset="weak">弱网</button>
+              <button class="gt-mode" data-preset="severe">强弱网</button>
+              <button class="gt-mode" data-preset="jitter">抖动</button>
+              <button class="gt-mode" data-preset="loss">丢包</button>
+              <button class="gt-mode" data-preset="latency">高延迟</button>
+              <button class="gt-mode" data-preset="offline">断网</button>
+              <button class="gt-mode" data-preset="offline10">断网10s</button>
+              <button class="gt-mode" data-preset="custom">自定义</button>
             </div>
             <div class="gt-custom" id="gt-custom">
               <div class="gt-row"><span class="gt-label">WS 延迟</span><span class="gt-input-unit"><input type="number" id="gt-latency" min="0" max="10000" step="100" value="800"><em>ms</em></span></div>
+              <div class="gt-row"><span class="gt-label">抖动范围</span><span class="gt-input-unit"><input type="number" id="gt-jitter" min="0" max="5000" step="100" value="0"><em>±ms</em></span></div>
               <div class="gt-row"><span class="gt-label">丢包率</span><span class="gt-input-unit"><input type="number" id="gt-loss" min="0" max="100" step="5" value="10"><em>%</em></span></div>
               <div class="gt-row"><span class="gt-label">HTTP 延迟</span><span class="gt-input-unit"><input type="number" id="gt-http-latency" min="0" max="10000" step="100" value="800"><em>ms</em></span></div>
               <button class="gt-apply" id="gt-apply-custom">应用自定义网络</button>
@@ -175,11 +205,15 @@
               <button class="gt-update-btn" id="gt-check-update" title="从代码仓库检查更新">检查更新</button>
             </div>
             <div class="gt-update-status" id="gt-update-status"></div>
-            <div>F8 隐藏面板 · F7 开关连点 · 仅作用于当前页面</div>
+            <div class="gt-foot-row">
+              <span>收起后显示入口胶囊</span>
+              <label class="gt-switch gt-switch-sm"><input type="checkbox" id="gt-show-pill"><span class="gt-slider"></span></label>
+            </div>
+            <div>F8 面板 · F7 连点 · Alt+Shift+1~8 网络场景</div>
           </div>
         </div>
       </div>
-      <button class="gt-restore" id="gt-restore" title="展开游戏助手（可以拖动）">
+      <div class="gt-restore" id="gt-restore" role="button" tabindex="0" title="展开游戏助手（可以拖动）">
         <span class="gt-restore-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
             <path d="M7 7h10a4 4 0 0 1 3.9 3.1l1.1 5.2A2.6 2.6 0 0 1 18.7 18c-.9 0-1.7-.4-2.2-1.1L15.4 15H8.6l-1.1 1.9C7 17.6 6.2 18 5.3 18a2.6 2.6 0 0 1-3.3-2.7l1.1-5.2A4 4 0 0 1 7 7Z"/>
@@ -187,7 +221,9 @@
           </svg>
         </span>
         <span class="gt-restore-text">游戏助手</span>
-      </button>
+        <button class="gt-restore-hide" id="gt-restore-hide" title="隐藏入口（Alt+G / F8 可重新打开）">×</button>
+      </div>
+      <div class="gt-toast" id="gt-toast"></div>
     </div>
   `;
 
@@ -350,7 +386,7 @@
   };
 
   // ---------------- 网络状态展示 ----------------
-  const modeLabel = { normal: '正常', weak: '弱网', offline: '断网', custom: '自定义' };
+  const modeLabel = { normal: '正常', weak: '弱网', severe: '强弱网', jitter: '抖动', loss: '丢包', latency: '高延迟', offline: '断网', custom: '自定义' };
 
   const updateNetUi = (state) => {
     if (!state) return;
@@ -361,7 +397,7 @@
     }
     if (refs.modes) {
       refs.modes.querySelectorAll('.gt-mode').forEach((btn) => {
-        btn.classList.toggle('active', btn.dataset.mode === currentMode);
+        btn.classList.toggle('active', btn.dataset.preset === currentPresetKey);
       });
     }
     const stats = state.stats || {};
@@ -370,18 +406,29 @@
     }
     if (refs.netStatus) {
       let text = `当前网络：${modeLabel[currentMode] || currentMode}`;
-      if (currentMode === 'weak' || currentMode === 'custom') {
-        text += `（延迟 ${state.latencyMs || 0}ms · 丢包 ${Math.round((state.lossRate || 0) * 100)}%）`;
-        refs.netStatus.className = 'gt-tip warn';
-      } else if (currentMode === 'offline') {
-        text += '（已阻止新连接；恢复后如游戏未自动重连，请点游戏内「重连网络」）';
-        refs.netStatus.className = 'gt-tip err';
-      } else {
-        refs.netStatus.className = 'gt-tip';
+      if (currentMode !== 'normal') {
+        const parts = [];
+        if (state.latencyMs) parts.push(`延迟 ${state.latencyMs}${state.jitterMs ? '±' + state.jitterMs : ''}ms`);
+        if (state.lossRate) parts.push(`丢包 ${Math.round((state.lossRate || 0) * 100)}%`);
+        if (state.httpLatencyMs) parts.push(`HTTP ${state.httpLatencyMs}ms`);
+        if (parts.length) text += `（${parts.join(' · ')}）`;
+        if (currentMode === 'offline') {
+          text += '（已阻止新连接；恢复后如游戏未自动重连，请点游戏内「重连网络」）';
+        }
       }
+      refs.netStatus.className = 'gt-tip' + (currentMode === 'normal' ? '' : currentMode === 'offline' ? ' err' : ' warn');
       refs.netStatus.textContent = text;
     }
     if (host) host.dataset.netMode = currentMode;
+  };
+
+  // 页面内轻提示（切换网络场景时使用）
+  const showToast = (text) => {
+    if (!refs.toast) return;
+    refs.toast.textContent = text;
+    refs.toast.classList.add('show');
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => refs.toast.classList.remove('show'), 1800);
   };
 
   const showTip = (text, level) => {
@@ -424,6 +471,7 @@
       modes: shadow.getElementById('gt-modes'),
       custom: shadow.getElementById('gt-custom'),
       latency: shadow.getElementById('gt-latency'),
+      jitter: shadow.getElementById('gt-jitter'),
       loss: shadow.getElementById('gt-loss'),
       httpLatency: shadow.getElementById('gt-http-latency'),
       applyCustom: shadow.getElementById('gt-apply-custom'),
@@ -431,6 +479,9 @@
       conn: shadow.getElementById('gt-conn'),
       checkUpdate: shadow.getElementById('gt-check-update'),
       updateStatus: shadow.getElementById('gt-update-status'),
+      showPill: shadow.getElementById('gt-show-pill'),
+      restoreHide: shadow.getElementById('gt-restore-hide'),
+      toast: shadow.getElementById('gt-toast'),
     };
 
     // 面板自身事件不传给游戏，也不触发连点
@@ -450,6 +501,7 @@
       refs.clickCount.value = settings.clickCount;
       refs.clickInterval.value = settings.clickIntervalMs;
       refs.replayMode.value = settings.replayMode;
+      refs.showPill.checked = !!settings.showRestorePill;
       updateClickStatus();
     };
     syncFromSettings();
@@ -478,41 +530,108 @@
       saveSettings();
       updateClickStatus();
     });
-
-    // 网络按钮
-    refs.modes.addEventListener('click', (event) => {
-      const btn = event.target.closest('.gt-mode');
-      if (!btn) return;
-      const mode = btn.dataset.mode;
-      if (mode === 'normal') {
-        refs.custom.classList.remove('show');
-        customVisible = false;
-        applyNetwork({ mode: 'normal', latencyMs: 0, lossRate: 0, httpLatencyMs: 0, httpFailRate: 0 });
-      } else if (mode === 'weak') {
-        refs.custom.classList.remove('show');
-        customVisible = false;
-        applyNetwork({ mode: 'weak', latencyMs: 1000, lossRate: 0.1, httpLatencyMs: 1000, httpFailRate: 0 });
-      } else if (mode === 'offline') {
-        refs.custom.classList.remove('show');
-        customVisible = false;
-        applyNetwork({ mode: 'offline', latencyMs: 0, lossRate: 0, httpLatencyMs: 0, httpFailRate: 0 });
-      } else if (mode === 'custom') {
-        customVisible = !customVisible;
-        refs.custom.classList.toggle('show', customVisible);
-        if (customVisible) applyCustomNetwork();
-      }
+    refs.showPill.addEventListener('change', () => {
+      settings.showRestorePill = refs.showPill.checked;
+      saveSettings();
+      if (!settings.showRestorePill && panelHidden) refs.restore.classList.remove('show');
     });
 
+    // 网络场景
+    const clearAutoRestore = () => {
+      if (autoRestoreTimer) {
+        clearTimeout(autoRestoreTimer);
+        autoRestoreTimer = null;
+      }
+    };
+    const setPresetActive = (key) => {
+      currentPresetKey = key;
+      if (host) host.dataset.presetKey = key;
+      if (refs.modes) {
+        refs.modes.querySelectorAll('.gt-mode').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.preset === key);
+        });
+      }
+    };
     const applyCustomNetwork = () => {
       const latencyMs = clamp(refs.latency.value, 0, 10000);
+      const jitterMs = clamp(refs.jitter.value, 0, 5000);
       const lossRate = clamp(refs.loss.value, 0, 100) / 100;
       const httpLatencyMs = clamp(refs.httpLatency.value, 0, 10000);
       refs.latency.value = latencyMs;
+      refs.jitter.value = jitterMs;
       refs.loss.value = Math.round(lossRate * 100);
       refs.httpLatency.value = httpLatencyMs;
-      applyNetwork({ mode: 'custom', latencyMs, lossRate, httpLatencyMs, httpFailRate: 0 });
+      clearAutoRestore();
+      setPresetActive('custom');
+      applyNetwork({ mode: 'custom', latencyMs, jitterMs, lossRate, httpLatencyMs, httpFailRate: 0 });
+      showToast('网络场景：自定义');
     };
+    const applyPreset = (key) => {
+      const preset = PRESET_BY_KEY.get(key);
+      if (!preset) return;
+      clearAutoRestore();
+      if (preset.key === 'custom') {
+        customVisible = !customVisible;
+        refs.custom.classList.toggle('show', customVisible);
+        setPresetActive('custom');
+        if (customVisible) applyCustomNetwork();
+        return;
+      }
+      customVisible = false;
+      refs.custom.classList.remove('show');
+      setPresetActive(preset.key);
+      applyNetwork({
+        mode: preset.mode,
+        latencyMs: preset.latencyMs || 0,
+        jitterMs: preset.jitterMs || 0,
+        lossRate: preset.lossRate || 0,
+        httpLatencyMs: preset.httpLatencyMs || 0,
+        httpFailRate: 0,
+      });
+      if (preset.durationMs) {
+        const seconds = Math.round(preset.durationMs / 1000);
+        showToast(`${preset.label}：${seconds} 秒后自动恢复`);
+        autoRestoreTimer = setTimeout(() => {
+          autoRestoreTimer = null;
+          applyPreset('normal');
+          showToast('网络已恢复：正常');
+        }, preset.durationMs);
+      } else {
+        showToast(`网络场景：${preset.label}`);
+      }
+    };
+    refs.modes.addEventListener('click', (event) => {
+      const btn = event.target.closest('.gt-mode[data-preset]');
+      if (!btn) return;
+      applyPreset(btn.dataset.preset);
+    });
     refs.applyCustom.addEventListener('click', applyCustomNetwork);
+
+    // 网络场景快捷键：Alt+Shift+1~8
+    const NETWORK_SHORTCUT_MAP = {
+      Digit1: 'normal',
+      Digit2: 'weak',
+      Digit3: 'severe',
+      Digit4: 'jitter',
+      Digit5: 'loss',
+      Digit6: 'latency',
+      Digit7: 'offline',
+      Digit8: 'offline10',
+    };
+    window.addEventListener(
+      'keydown',
+      (event) => {
+        if (!event.altKey || !event.shiftKey) return;
+        const presetKey = NETWORK_SHORTCUT_MAP[event.code];
+        if (!presetKey) return;
+        const tag = (document.activeElement && document.activeElement.tagName) || '';
+        if (/INPUT|TEXTAREA|SELECT/.test(tag)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        applyPreset(presetKey);
+      },
+      true,
+    );
 
     // 收起 / 展开（悬浮胶囊的展开逻辑在 pointerup 里处理，拖动时不会误触展开）
     refs.min.addEventListener('click', () => setPanelHidden(true));
@@ -647,6 +766,7 @@
     // 折叠胶囊：单击展开，按住可拖动并记住位置
     const onRestorePointerDown = (event) => {
       if (event.button !== undefined && event.button !== 0) return;
+      if (event.target && event.target.closest && event.target.closest('#gt-restore-hide')) return;
       const rect = refs.restore.getBoundingClientRect();
       restoreDrag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, left: rect.left, top: rect.top, moved: false };
       refs.restore.classList.add('dragging');
@@ -680,6 +800,20 @@
     window.addEventListener('pointermove', onRestorePointerMove, true);
     window.addEventListener('pointerup', onRestorePointerUp, true);
     window.addEventListener('pointercancel', onRestorePointerUp, true);
+
+    // 胶囊上的 ×：隐藏这个入口（之后用 Alt+G / F8 / 扩展图标重新打开面板）
+    if (refs.restoreHide) {
+      refs.restoreHide.addEventListener('pointerdown', (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+      });
+      refs.restoreHide.addEventListener('click', (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        setPanelHidden(true, { showPill: false });
+        showToast('入口已隐藏，按 Alt+G 或 F8 可重新打开');
+      });
+    }
 
     // 消息与轮询
     window.addEventListener('message', (event) => {
@@ -719,6 +853,8 @@
     window.__gameToolPanel = {
       getReplayCount: () => replayCount,
       settings,
+      presets: NETWORK_PRESETS,
+      applyPreset,
       toggle: () => setPanelHidden(!panelHidden),
       show: () => setPanelHidden(false),
       hide: () => setPanelHidden(true, { showPill: true }),
@@ -752,7 +888,7 @@
 
   const setPanelHidden = (hidden, options = {}) => {
     panelHidden = hidden;
-    const showPill = options.showPill !== undefined ? options.showPill : hidden;
+    const showPill = (options.showPill !== undefined ? options.showPill : hidden) && settings.showRestorePill;
     if (!refs.panel) return;
     refs.panel.classList.toggle('gt-hidden', hidden);
     refs.restore.classList.toggle('show', hidden && showPill);
@@ -776,7 +912,8 @@
           const savedVersion = Number(saved.settingsVersion) || 0;
           // v1.3 起默认补点间隔改为 350ms：老版本里 60ms 这类过短间隔自动迁移一次
           if (savedVersion < 2 && settings.clickIntervalMs <= 80) settings.clickIntervalMs = 350;
-          settings.settingsVersion = 2;
+          if (typeof saved.showRestorePill === 'boolean') settings.showRestorePill = saved.showRestorePill;
+          settings.settingsVersion = 3;
           const allowedReplayModes = ['auto', 'pointer', 'mouse', 'touch', 'trusted'];
           if (saved.replayMode && allowedReplayModes.includes(saved.replayMode)) settings.replayMode = saved.replayMode;
         }

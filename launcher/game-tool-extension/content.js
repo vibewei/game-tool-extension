@@ -11,7 +11,7 @@
   const STORAGE_KEY = 'gameToolSettings';
   const POSITION_KEY = 'gameToolPanelPosition';
   const RESTORE_POSITION_KEY = 'gameToolRestorePosition';
-  const VERSION = '1.5.0';
+  const VERSION = '1.5.1';
 
   const settings = {
     clickEnabled: false,
@@ -19,7 +19,8 @@
     clickIntervalMs: 350,
     replayMode: 'auto', // auto | pointer | mouse | touch | trusted
     showRestorePill: true,
-    settingsVersion: 3,
+    panelCollapsed: false,
+    settingsVersion: 4,
   };
 
   // 网络场景预设（快捷键 Alt+Shift+1~8 对应前 8 个）
@@ -81,7 +82,12 @@
     .gt-net-badge.offline { background: rgba(240,80,80,0.18); color: #ff7b7b; }
     .gt-min { all: unset; cursor: pointer; width: 20px; height: 20px; line-height: 18px; text-align: center; border-radius: 5px; color: #aeb4bf; font-size: 14px; }
     .gt-min:hover { background: rgba(255,255,255,0.12); color: #fff; }
+    .gt-collapse { all: unset; cursor: pointer; width: 20px; height: 20px; border-radius: 5px; color: #aeb4bf; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+    .gt-collapse:hover { background: rgba(255,255,255,0.12); color: #fff; }
+    .gt-collapse svg { width: 14px; height: 14px; transition: transform 0.15s ease; }
+    .gt-collapse.collapsed svg { transform: rotate(180deg); }
     .gt-body { padding: 10px 12px 8px; }
+    .gt-body.collapsed { display: none; }
     .gt-section { padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.08); }
     .gt-section:first-child { border-top: 0; padding-top: 2px; }
     .gt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0; }
@@ -145,6 +151,11 @@
           <span class="gt-dot"></span>
           <span class="gt-title">游戏助手</span>
           <span class="gt-net-badge" id="gt-net-badge">正常</span>
+          <button class="gt-collapse" id="gt-collapse" title="收起面板内容">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 15l6-6 6 6"/>
+            </svg>
+          </button>
           <button class="gt-min" id="gt-min" title="收起 (F8)">—</button>
         </div>
         <div class="gt-body" id="gt-body">
@@ -460,6 +471,7 @@
       panel: shadow.getElementById('gt-panel'),
       head: shadow.getElementById('gt-head'),
       body: shadow.getElementById('gt-body'),
+      collapse: shadow.getElementById('gt-collapse'),
       netBadge: shadow.getElementById('gt-net-badge'),
       min: shadow.getElementById('gt-min'),
       restore: shadow.getElementById('gt-restore'),
@@ -496,12 +508,21 @@
     refs.restore.style.pointerEvents = 'auto';
 
     // 设置同步
+    const applyPanelCollapsed = (collapsed) => {
+      settings.panelCollapsed = !!collapsed;
+      if (refs.body) refs.body.classList.toggle('collapsed', settings.panelCollapsed);
+      if (refs.collapse) {
+        refs.collapse.classList.toggle('collapsed', settings.panelCollapsed);
+        refs.collapse.title = settings.panelCollapsed ? '展开面板内容' : '收起面板内容';
+      }
+    };
     const syncFromSettings = () => {
       refs.clickEnabled.checked = !!settings.clickEnabled;
       refs.clickCount.value = settings.clickCount;
       refs.clickInterval.value = settings.clickIntervalMs;
       refs.replayMode.value = settings.replayMode;
       refs.showPill.checked = !!settings.showRestorePill;
+      applyPanelCollapsed(settings.panelCollapsed);
       updateClickStatus();
     };
     syncFromSettings();
@@ -635,6 +656,13 @@
 
     // 收起 / 展开（悬浮胶囊的展开逻辑在 pointerup 里处理，拖动时不会误触展开）
     refs.min.addEventListener('click', () => setPanelHidden(true));
+
+    // 仅收起 / 展开面板内容（不隐藏面板，标题栏和网络状态仍可见）
+    refs.collapse.addEventListener('click', (event) => {
+      event.stopPropagation();
+      applyPanelCollapsed(!settings.panelCollapsed);
+      saveSettings();
+    });
 
     // 检查更新：从代码仓库读取 version.json，比较版本号
     let pendingUpdateUrl = '';
@@ -913,7 +941,8 @@
           // v1.3 起默认补点间隔改为 350ms：老版本里 60ms 这类过短间隔自动迁移一次
           if (savedVersion < 2 && settings.clickIntervalMs <= 80) settings.clickIntervalMs = 350;
           if (typeof saved.showRestorePill === 'boolean') settings.showRestorePill = saved.showRestorePill;
-          settings.settingsVersion = 3;
+          if (typeof saved.panelCollapsed === 'boolean') settings.panelCollapsed = saved.panelCollapsed;
+          settings.settingsVersion = 4;
           const allowedReplayModes = ['auto', 'pointer', 'mouse', 'touch', 'trusted'];
           if (saved.replayMode && allowedReplayModes.includes(saved.replayMode)) settings.replayMode = saved.replayMode;
         }

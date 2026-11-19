@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "游戏连点 & 网络异常助手",
+  "version": "1.3.3",
+  "description": "设置点击次数后，在游戏里手动点一次自动补点到对应次数；一键模拟断网、弱网、丢包。所有网页可用。",
+  "minimum_chrome_version": "111",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "debugger"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "游戏助手：显示/隐藏面板（Alt+G）"
+  },
+  "commands": {
+    "toggle-panel": {
+      "suggested_key": {
+        "default": "Alt+G"
+      },
+      "description": "显示/隐藏游戏助手面板"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "page-inject.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ]
+}

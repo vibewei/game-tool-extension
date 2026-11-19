@@ -1,0 +1,15 @@
+{
+  "gameUrl": "https://mjcdn.m2time.net/mj/test_develop/web-mobile/index.html",
+  "browser": "edge",
+  "sourceDir": "",
+  "localExtensionDir": "%LOCALAPPDATA%\\GameToolExtension",
+  "edgeProfileDir": "%LOCALAPPDATA%\\GameToolEdgeProfile",
+  "edgePath": "",
+  "chromePath": "",
+  "update": {
+    "versionUrl": "https://raw.githubusercontent.com/vibewei/game-tool-extension/main/version.json",
+    "zipUrl": "",
+    "pageUrl": "https://github.com/vibewei/game-tool-extension",
+    "autoCheck": false
+  }
+}

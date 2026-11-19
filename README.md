@@ -5,7 +5,7 @@
 1. **连点**：设定点击次数后，在游戏里手动点 1 次，自动补点到设定次数；支持 Pointer / 鼠标 / 触摸 / 真实输入（调试器）。
 2. **网络场景**：一键模拟 正常 / 弱网 / 强弱网 / 抖动 / 丢包 / 高延迟 / 断网 / 断网10s / 自定义，支持 `Alt+Shift+1~8` 组合快捷键。
 
-插件面板底部带「检查更新」按钮，可直接查询本仓库版本并提示升级；面板标题栏可一键收起内容（只剩标题栏，网络状态仍可见），收起后的胶囊可点 × 隐藏。插件基于 Chrome / Edge 扩展（Manifest V3），默认不显示面板，通过浏览器扩展图标、`Alt+G` 或 `F8` 唤起。
+插件面板底部带「检查更新」按钮，可直接查询本仓库版本并提示升级；「连点设置」「网络场景」两个区块可分别收起/展开，收起后的胶囊可点 × 隐藏。插件基于 Chrome / Edge 扩展（Manifest V3），默认不显示面板，通过浏览器扩展图标、`Alt+G` 或 `F8` 唤起。
 
 ![面板预览](extension/docs/preview.jpg)
 
@@ -57,7 +57,7 @@ launcher/update.ps1  → 比较版本 → 下载 dist/game-tool-extension.zip �
 
 ```json
 {
-  "version": "1.5.1",
+  "version": "1.5.2",
   "zipUrl": "https://raw.githubusercontent.com/vibewei/game-tool-extension/main/dist/game-tool-extension.zip",
   "pageUrl": "https://github.com/vibewei/game-tool-extension"
 }

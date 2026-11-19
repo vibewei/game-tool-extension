@@ -11,7 +11,7 @@
   const STORAGE_KEY = 'gameToolSettings';
   const POSITION_KEY = 'gameToolPanelPosition';
   const RESTORE_POSITION_KEY = 'gameToolRestorePosition';
-  const VERSION = '1.5.1';
+  const VERSION = '1.5.2';
 
   const settings = {
     clickEnabled: false,
@@ -19,8 +19,9 @@
     clickIntervalMs: 350,
     replayMode: 'auto', // auto | pointer | mouse | touch | trusted
     showRestorePill: true,
-    panelCollapsed: false,
-    settingsVersion: 4,
+    clickCollapsed: false,
+    networkCollapsed: false,
+    settingsVersion: 5,
   };
 
   // 网络场景预设（快捷键 Alt+Shift+1~8 对应前 8 个）
@@ -82,12 +83,15 @@
     .gt-net-badge.offline { background: rgba(240,80,80,0.18); color: #ff7b7b; }
     .gt-min { all: unset; cursor: pointer; width: 20px; height: 20px; line-height: 18px; text-align: center; border-radius: 5px; color: #aeb4bf; font-size: 14px; }
     .gt-min:hover { background: rgba(255,255,255,0.12); color: #fff; }
-    .gt-collapse { all: unset; cursor: pointer; width: 20px; height: 20px; border-radius: 5px; color: #aeb4bf; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
-    .gt-collapse:hover { background: rgba(255,255,255,0.12); color: #fff; }
-    .gt-collapse svg { width: 14px; height: 14px; transition: transform 0.15s ease; }
-    .gt-collapse.collapsed svg { transform: rotate(180deg); }
     .gt-body { padding: 10px 12px 8px; }
-    .gt-body.collapsed { display: none; }
+    .gt-sec-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .gt-sec-title { font-size: 12px; font-weight: 600; color: #dfe3ea; flex: 0 0 auto; }
+    .gt-sec-head .gt-small { margin-left: auto; }
+    .gt-sec-toggle { all: unset; cursor: pointer; width: 20px; height: 20px; border-radius: 5px; color: #aeb4bf; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+    .gt-sec-head:hover .gt-sec-toggle { background: rgba(255,255,255,0.12); color: #fff; }
+    .gt-sec-toggle svg { width: 14px; height: 14px; transition: transform 0.15s ease; }
+    .gt-sec-toggle.collapsed svg { transform: rotate(180deg); }
+    .gt-sec-body.collapsed { display: none; }
     .gt-section { padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.08); }
     .gt-section:first-child { border-top: 0; padding-top: 2px; }
     .gt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0; }
@@ -151,64 +155,73 @@
           <span class="gt-dot"></span>
           <span class="gt-title">游戏助手</span>
           <span class="gt-net-badge" id="gt-net-badge">正常</span>
-          <button class="gt-collapse" id="gt-collapse" title="收起面板内容">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6 15l6-6 6 6"/>
-            </svg>
-          </button>
           <button class="gt-min" id="gt-min" title="收起 (F8)">—</button>
         </div>
         <div class="gt-body" id="gt-body">
           <div class="gt-section">
-            <div class="gt-row">
-              <span class="gt-label">连点模式</span>
-              <label class="gt-switch"><input type="checkbox" id="gt-click-enabled"><span class="gt-slider"></span></label>
+            <div class="gt-sec-head" id="gt-click-head" role="button" tabindex="0" title="收起/展开连点设置">
+              <span class="gt-sec-title">连点设置</span>
+              <span class="gt-small" id="gt-click-summary">已关闭</span>
+              <span class="gt-sec-toggle" id="gt-toggle-click">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+              </span>
             </div>
-            <div class="gt-row">
-              <span class="gt-label">点击次数</span>
-              <input type="number" id="gt-click-count" min="1" max="99" step="1" value="5">
+            <div class="gt-sec-body" id="gt-click-body">
+              <div class="gt-row">
+                <span class="gt-label">连点模式</span>
+                <label class="gt-switch"><input type="checkbox" id="gt-click-enabled"><span class="gt-slider"></span></label>
+              </div>
+              <div class="gt-row">
+                <span class="gt-label">点击次数</span>
+                <input type="number" id="gt-click-count" min="1" max="99" step="1" value="5">
+              </div>
+              <div class="gt-row">
+                <span class="gt-label">补点间隔</span>
+                <span class="gt-input-unit"><input type="number" id="gt-click-interval" min="0" max="1000" step="10" value="60"><em>ms</em></span>
+              </div>
+              <div class="gt-row">
+                <span class="gt-label">补点方式</span>
+                <select id="gt-replay-mode">
+                  <option value="auto">自动（推荐）</option>
+                  <option value="pointer">Pointer 事件</option>
+                  <option value="mouse">鼠标事件</option>
+                  <option value="touch">触摸事件</option>
+                  <option value="trusted">真实输入（调试器）</option>
+                </select>
+              </div>
+              <div class="gt-tip">升级/抽卡等有动画的按钮，补点间隔建议 ≥300ms；仍不响应再换「真实输入（调试器）」。</div>
+              <div class="gt-tip" id="gt-click-status">开启后：在游戏里点 1 次 = 自动点击设定次数</div>
             </div>
-            <div class="gt-row">
-              <span class="gt-label">补点间隔</span>
-              <span class="gt-input-unit"><input type="number" id="gt-click-interval" min="0" max="1000" step="10" value="60"><em>ms</em></span>
-            </div>
-            <div class="gt-row">
-              <span class="gt-label">补点方式</span>
-              <select id="gt-replay-mode">
-                <option value="auto">自动（推荐）</option>
-                <option value="pointer">Pointer 事件</option>
-                <option value="mouse">鼠标事件</option>
-                <option value="touch">触摸事件</option>
-                <option value="trusted">真实输入（调试器）</option>
-              </select>
-            </div>
-            <div class="gt-tip">升级/抽卡等有动画的按钮，补点间隔建议 ≥300ms；仍不响应再换「真实输入（调试器）」。</div>
-            <div class="gt-tip" id="gt-click-status">开启后：在游戏里点 1 次 = 自动点击设定次数</div>
           </div>
           <div class="gt-section">
-            <div class="gt-row">
-              <span class="gt-label">网络场景</span>
+            <div class="gt-sec-head" id="gt-network-head" role="button" tabindex="0" title="收起/展开网络场景">
+              <span class="gt-sec-title">网络场景</span>
               <span class="gt-small" id="gt-conn">WS: -</span>
+              <span class="gt-sec-toggle" id="gt-toggle-network">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+              </span>
             </div>
-            <div class="gt-modes" id="gt-modes">
-              <button class="gt-mode active" data-preset="normal">正常</button>
-              <button class="gt-mode" data-preset="weak">弱网</button>
-              <button class="gt-mode" data-preset="severe">强弱网</button>
-              <button class="gt-mode" data-preset="jitter">抖动</button>
-              <button class="gt-mode" data-preset="loss">丢包</button>
-              <button class="gt-mode" data-preset="latency">高延迟</button>
-              <button class="gt-mode" data-preset="offline">断网</button>
-              <button class="gt-mode" data-preset="offline10">断网10s</button>
-              <button class="gt-mode" data-preset="custom">自定义</button>
+            <div class="gt-sec-body" id="gt-network-body">
+              <div class="gt-modes" id="gt-modes">
+                <button class="gt-mode active" data-preset="normal">正常</button>
+                <button class="gt-mode" data-preset="weak">弱网</button>
+                <button class="gt-mode" data-preset="severe">强弱网</button>
+                <button class="gt-mode" data-preset="jitter">抖动</button>
+                <button class="gt-mode" data-preset="loss">丢包</button>
+                <button class="gt-mode" data-preset="latency">高延迟</button>
+                <button class="gt-mode" data-preset="offline">断网</button>
+                <button class="gt-mode" data-preset="offline10">断网10s</button>
+                <button class="gt-mode" data-preset="custom">自定义</button>
+              </div>
+              <div class="gt-custom" id="gt-custom">
+                <div class="gt-row"><span class="gt-label">WS 延迟</span><span class="gt-input-unit"><input type="number" id="gt-latency" min="0" max="10000" step="100" value="800"><em>ms</em></span></div>
+                <div class="gt-row"><span class="gt-label">抖动范围</span><span class="gt-input-unit"><input type="number" id="gt-jitter" min="0" max="5000" step="100" value="0"><em>±ms</em></span></div>
+                <div class="gt-row"><span class="gt-label">丢包率</span><span class="gt-input-unit"><input type="number" id="gt-loss" min="0" max="100" step="5" value="10"><em>%</em></span></div>
+                <div class="gt-row"><span class="gt-label">HTTP 延迟</span><span class="gt-input-unit"><input type="number" id="gt-http-latency" min="0" max="10000" step="100" value="800"><em>ms</em></span></div>
+                <button class="gt-apply" id="gt-apply-custom">应用自定义网络</button>
+              </div>
+              <div class="gt-tip" id="gt-net-status">当前网络：正常</div>
             </div>
-            <div class="gt-custom" id="gt-custom">
-              <div class="gt-row"><span class="gt-label">WS 延迟</span><span class="gt-input-unit"><input type="number" id="gt-latency" min="0" max="10000" step="100" value="800"><em>ms</em></span></div>
-              <div class="gt-row"><span class="gt-label">抖动范围</span><span class="gt-input-unit"><input type="number" id="gt-jitter" min="0" max="5000" step="100" value="0"><em>±ms</em></span></div>
-              <div class="gt-row"><span class="gt-label">丢包率</span><span class="gt-input-unit"><input type="number" id="gt-loss" min="0" max="100" step="5" value="10"><em>%</em></span></div>
-              <div class="gt-row"><span class="gt-label">HTTP 延迟</span><span class="gt-input-unit"><input type="number" id="gt-http-latency" min="0" max="10000" step="100" value="800"><em>ms</em></span></div>
-              <button class="gt-apply" id="gt-apply-custom">应用自定义网络</button>
-            </div>
-            <div class="gt-tip" id="gt-net-status">当前网络：正常</div>
           </div>
           <div class="gt-foot">
             <div class="gt-foot-row">
@@ -255,6 +268,9 @@
       if (lastReplayInfo) text += ` · 目标 ${lastReplayInfo.target}${lastReplayInfo.pointerType ? '/' + lastReplayInfo.pointerType : ''}`;
       refs.clickStatus.textContent = text;
       refs.clickStatus.className = 'gt-tip';
+    }
+    if (refs.clickSummary) {
+      refs.clickSummary.textContent = settings.clickEnabled ? `连点 ${settings.clickCount} 次` : '已关闭';
     }
     if (host) {
       host.dataset.replayCount = String(replayCount);
@@ -471,7 +487,13 @@
       panel: shadow.getElementById('gt-panel'),
       head: shadow.getElementById('gt-head'),
       body: shadow.getElementById('gt-body'),
-      collapse: shadow.getElementById('gt-collapse'),
+      clickHead: shadow.getElementById('gt-click-head'),
+      clickBody: shadow.getElementById('gt-click-body'),
+      clickToggle: shadow.getElementById('gt-toggle-click'),
+      clickSummary: shadow.getElementById('gt-click-summary'),
+      networkHead: shadow.getElementById('gt-network-head'),
+      networkBody: shadow.getElementById('gt-network-body'),
+      networkToggle: shadow.getElementById('gt-toggle-network'),
       netBadge: shadow.getElementById('gt-net-badge'),
       min: shadow.getElementById('gt-min'),
       restore: shadow.getElementById('gt-restore'),
@@ -508,13 +530,18 @@
     refs.restore.style.pointerEvents = 'auto';
 
     // 设置同步
-    const applyPanelCollapsed = (collapsed) => {
-      settings.panelCollapsed = !!collapsed;
-      if (refs.body) refs.body.classList.toggle('collapsed', settings.panelCollapsed);
-      if (refs.collapse) {
-        refs.collapse.classList.toggle('collapsed', settings.panelCollapsed);
-        refs.collapse.title = settings.panelCollapsed ? '展开面板内容' : '收起面板内容';
-      }
+    const applySectionCollapsed = (section, collapsed) => {
+      if (section === 'network') settings.networkCollapsed = !!collapsed;
+      else settings.clickCollapsed = !!collapsed;
+      const body = section === 'network' ? refs.networkBody : refs.clickBody;
+      const toggle = section === 'network' ? refs.networkToggle : refs.clickToggle;
+      if (body) body.classList.toggle('collapsed', !!collapsed);
+      if (toggle) toggle.classList.toggle('collapsed', !!collapsed);
+    };
+    const toggleSection = (section) => {
+      if (section === 'network') applySectionCollapsed('network', !settings.networkCollapsed);
+      else applySectionCollapsed('click', !settings.clickCollapsed);
+      saveSettings();
     };
     const syncFromSettings = () => {
       refs.clickEnabled.checked = !!settings.clickEnabled;
@@ -522,7 +549,8 @@
       refs.clickInterval.value = settings.clickIntervalMs;
       refs.replayMode.value = settings.replayMode;
       refs.showPill.checked = !!settings.showRestorePill;
-      applyPanelCollapsed(settings.panelCollapsed);
+      applySectionCollapsed('click', settings.clickCollapsed);
+      applySectionCollapsed('network', settings.networkCollapsed);
       updateClickStatus();
     };
     syncFromSettings();
@@ -657,12 +685,21 @@
     // 收起 / 展开（悬浮胶囊的展开逻辑在 pointerup 里处理，拖动时不会误触展开）
     refs.min.addEventListener('click', () => setPanelHidden(true));
 
-    // 仅收起 / 展开面板内容（不隐藏面板，标题栏和网络状态仍可见）
-    refs.collapse.addEventListener('click', (event) => {
-      event.stopPropagation();
-      applyPanelCollapsed(!settings.panelCollapsed);
-      saveSettings();
-    });
+    // 连点设置 / 网络场景：两个区块分别收起、展开
+    const onSectionHeadClick = (section) => (event) => {
+      if (event.target && event.target.closest && event.target.closest('input, select, label, a, .gt-mode, .gt-apply')) return;
+      toggleSection(section);
+    };
+    const onSectionHeadKey = (section) => (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggleSection(section);
+      }
+    };
+    refs.clickHead.addEventListener('click', onSectionHeadClick('click'));
+    refs.networkHead.addEventListener('click', onSectionHeadClick('network'));
+    refs.clickHead.addEventListener('keydown', onSectionHeadKey('click'));
+    refs.networkHead.addEventListener('keydown', onSectionHeadKey('network'));
 
     // 检查更新：从代码仓库读取 version.json，比较版本号
     let pendingUpdateUrl = '';
@@ -753,7 +790,7 @@
         /* ignore */
       }
     };
-    const DRAG_IGNORE = 'button, input, label, select, textarea, a, .gt-switch, .gt-mode, .gt-apply';
+    const DRAG_IGNORE = 'button, input, label, select, textarea, a, .gt-switch, .gt-mode, .gt-apply, .gt-sec-head';
     const onDragStart = (event) => {
       if (event.button !== undefined && event.button !== 0) return;
       const target = event.target;
@@ -941,8 +978,13 @@
           // v1.3 起默认补点间隔改为 350ms：老版本里 60ms 这类过短间隔自动迁移一次
           if (savedVersion < 2 && settings.clickIntervalMs <= 80) settings.clickIntervalMs = 350;
           if (typeof saved.showRestorePill === 'boolean') settings.showRestorePill = saved.showRestorePill;
-          if (typeof saved.panelCollapsed === 'boolean') settings.panelCollapsed = saved.panelCollapsed;
-          settings.settingsVersion = 4;
+          // v1.5.2 起改为两个区块分别折叠；兼容 v1.5.1 的整体折叠状态
+          const oldCollapsed = typeof saved.panelCollapsed === 'boolean' ? saved.panelCollapsed : null;
+          if (typeof saved.clickCollapsed === 'boolean') settings.clickCollapsed = saved.clickCollapsed;
+          else if (oldCollapsed !== null) settings.clickCollapsed = oldCollapsed;
+          if (typeof saved.networkCollapsed === 'boolean') settings.networkCollapsed = saved.networkCollapsed;
+          else if (oldCollapsed !== null) settings.networkCollapsed = oldCollapsed;
+          settings.settingsVersion = 5;
           const allowedReplayModes = ['auto', 'pointer', 'mouse', 'touch', 'trusted'];
           if (saved.replayMode && allowedReplayModes.includes(saved.replayMode)) settings.replayMode = saved.replayMode;
         }

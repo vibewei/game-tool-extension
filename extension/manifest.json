@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "游戏连点 & 网络异常助手",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "设置点击次数后，在游戏里手动点一次自动补点到对应次数；一键模拟断网、弱网、丢包。所有网页可用。",
   "minimum_chrome_version": "111",
   "permissions": [

@@ -11,7 +11,7 @@
   const STORAGE_KEY = 'gameToolSettings';
   const POSITION_KEY = 'gameToolPanelPosition';
   const RESTORE_POSITION_KEY = 'gameToolRestorePosition';
-  const VERSION = '1.8.2';
+  const VERSION = '1.9.5';
 
   const DEFAULT_HOTKEYS = {
     panelToggle: 'F8',
@@ -333,7 +333,7 @@
                 </span>
               </div>
               <div class="gt-tip" id="gt-record-status">录制缓存会自动保存在内存；自动录屏、快捷键和域名配置在设置页。</div>
-              <div class="gt-tip gt-help">视频默认保存为 MP4（浏览器不支持时自动回退 WebM）；录屏按 1 分钟分段滚动缓存，只保留最近约 1~2 分钟；生成时录制继续，不足所选秒数时按实际时长导出。</div>
+              <div class="gt-tip gt-help">视频默认保存为 MP4（浏览器不支持时自动回退 WebM）；缓存最近约 1 分钟；保存时录制继续，不足所选秒数时按实际时长导出。</div>
             </div>
           </div>
           <div class="gt-foot">
@@ -921,6 +921,22 @@
     let rotating = false;
     const SEGMENT_MS = 60000;
     const MAX_SEGMENTS = 2;
+    // WebCodecs 连续编码（主路径）：保存时只做 MP4 封装，不再实时重编码
+    let wcMode = false;
+    let wcActive = false;
+    let wcEncoder = null;
+    let wcReader = null;
+    let wcChunks = [];
+    let wcBytes = 0;
+    let wcEncoderConfig = null;
+    let wcDecoderMeta = null;
+    let wcLastKeyAt = -1;
+    let wcDurationUs = 0;
+    let wcFrameWidth = 0;
+    let wcFrameHeight = 0;
+    let wcMuxerCodec = 'avc';
+    let wcFailureReason = '';
+    const WC_BUFFER_US = 65000000;
     const SAVE_DIR_DB_NAME = 'gameToolFileHandles';
     const SAVE_DIR_STORE = 'handles';
     const SAVE_DIR_KEY = 'saveDirectory';
@@ -1036,7 +1052,7 @@
       refs.recordStatus.textContent = text || '';
       refs.recordStatus.className = 'gt-tip' + (level ? ' ' + level : '');
     };
-    const recordActive = () => !!(recorder && recorder.state === 'recording');
+    const recordActive = () => !!(wcActive || (recorder && recorder.state === 'recording'));
     let recordRestoreTimer = null;
     const clearRecordRestore = () => {
       if (recordRestoreTimer) {
@@ -1044,14 +1060,14 @@
         recordRestoreTimer = null;
       }
     };
-    const recordLiveText = () => `录制中（${recordSource}）：出现问题时，点 15s / 30s / 60s 或按 ${displayHotkey((settings.hotkeys || DEFAULT_HOTKEYS).save30)} 导出点击前录像。`;
+    const recordLiveText = () => `录制中（${recordSource}${wcMode ? ' · WebCodecs 快速模式' : ' · 兼容模式' + (wcFailureReason ? '：' + wcFailureReason : '，保存较慢')}）：出现问题时，点 15s / 30s / 60s 或按 ${displayHotkey((settings.hotkeys || DEFAULT_HOTKEYS).save30)} 导出点击前录像。`;
     const updateRecordUi = () => {
       const active = recordActive();
       const bytes = bufferedBytes();
       const bufferText = bytes >= 1048576 ? `${Math.round(bytes / 1048576)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
       if (refs.recordSummary) {
         refs.recordSummary.textContent = active
-          ? '录制中 ' + fmtSeconds((Date.now() - recordStartedAt) / 1000)
+          ? `录制中 ${fmtSeconds((Date.now() - recordStartedAt) / 1000)} · ${wcMode ? '快速' : '兼容'}`
           : hasBufferedRecording()
             ? '可保存 ' + bufferText
             : '未录制';
@@ -1061,6 +1077,7 @@
         refs.recToggle.classList.toggle('recording', active);
       }
       if (refs.saveBtns) refs.saveBtns.forEach((btn) => { btn.disabled = saveBusy || !hasBufferedRecording(); });
+      if (host) host.dataset.recordMode = wcMode ? 'webcodecs' : 'media';
     };
     const stopRecordTracks = () => {
       if (!recordStream) return;
@@ -1076,8 +1093,8 @@
       recordChunks = [];
       recordBytes = 0;
     };
-    const bufferedBytes = () => recordSegments.reduce((sum, segment) => sum + segment.bytes, recordBytes);
-    const hasBufferedRecording = () => recordSegments.length > 0 || recordChunks.length > 0;
+    const bufferedBytes = () => (wcMode ? wcBytes : recordSegments.reduce((sum, segment) => sum + segment.bytes, recordBytes));
+    const hasBufferedRecording = () => (wcMode ? wcChunks.length > 0 : (recordSegments.length > 0 || recordChunks.length > 0));
     const resetSegmentBuffer = () => {
       recordSegments = [];
       recordChunks = [];
@@ -1088,6 +1105,21 @@
       clearRecordRestore();
       recordElapsedSeconds = recordStartedAt ? (Date.now() - recordStartedAt) / 1000 : recordElapsedSeconds;
       if (segmentTimer) { clearInterval(segmentTimer); segmentTimer = null; }
+      if (wcMode) {
+        wcActive = false;
+        const hadChunks = wcChunks.length > 0;
+        if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
+        updateRecordUi();
+        stopWebCodecsRecording()
+          .catch(() => { /* ignore */ })
+          .finally(() => {
+            stopRecordTracks();
+            recorder = null;
+            updateRecordUi();
+            setRecordStatus(message || (hadChunks ? '录屏已停止；仍可点 15s/30s/60s 保存已缓存片段。' : '录屏已停止。'));
+          });
+        return;
+      }
       const finishStop = () => {
         const hadChunks = hasBufferedRecording();
         recorder = null;
@@ -1128,7 +1160,190 @@
       recorder.start(1000);
       updateRecordUi();
     };
+    const canUseWebCodecs = () => !!(window.VideoEncoder && window.VideoFrame && window.MediaStreamTrackProcessor && window.EncodedVideoChunk && window.Mp4Muxer);
+    const resetWebCodecsBuffer = () => {
+      wcChunks = [];
+      wcBytes = 0;
+      wcDecoderMeta = null;
+      wcLastKeyAt = -1;
+      wcDurationUs = 0;
+      wcFrameWidth = 0;
+      wcFrameHeight = 0;
+    };
+    const pruneWebCodecsBuffer = () => {
+      if (!wcChunks.length) return;
+      const latest = wcChunks[wcChunks.length - 1].timestamp + (wcChunks[wcChunks.length - 1].duration || 0);
+      const cutoff = latest - WC_BUFFER_US;
+      let firstToKeep = 0;
+      for (let i = 0; i < wcChunks.length; i += 1) {
+        const end = wcChunks[i].timestamp + (wcChunks[i].duration || 0);
+        if (end >= cutoff) { firstToKeep = i; break; }
+      }
+      if (firstToKeep > 0) {
+        let keyIndex = 0;
+        for (let i = 0; i < firstToKeep; i += 1) {
+          if (wcChunks[i].isKey) keyIndex = i;
+        }
+        firstToKeep = keyIndex;
+        if (firstToKeep > 0) {
+          wcChunks = wcChunks.slice(firstToKeep);
+          wcBytes = wcChunks.reduce((sum, item) => sum + item.bytes, 0);
+        }
+      }
+    };
+    const startWebCodecsRecording = async () => {
+      const track = recordStream && recordStream.getVideoTracks()[0];
+      if (!track) throw new Error('没有可编码的视频轨道');
+      const processor = new MediaStreamTrackProcessor({ track });
+      wcReader = processor.readable.getReader();
+      const first = await wcReader.read();
+      if (!first || !first.value) throw new Error('没有读取到视频帧');
+      const firstFrame = first.value;
+      const sourceWidth = firstFrame.displayWidth || firstFrame.codedWidth;
+      const sourceHeight = firstFrame.displayHeight || firstFrame.codedHeight;
+      const width = Math.max(2, Math.floor(sourceWidth / 2) * 2);
+      const height = Math.max(2, Math.floor(sourceHeight / 2) * 2);
+      wcFrameWidth = width;
+      wcFrameHeight = height;
+      const bitrate = Math.min(12000000, Math.max(4000000, Math.round(width * height * 5)));
+      const outputHandler = (chunk, meta) => {
+        if (!chunk) return;
+        if (meta && meta.decoderConfig) wcDecoderMeta = meta;
+        const bytes = chunk.byteLength || 0;
+        wcChunks.push({
+          chunk,
+          timestamp: chunk.timestamp,
+          duration: chunk.duration || 0,
+          isKey: chunk.type === 'key',
+          bytes,
+        });
+        wcBytes += bytes;
+        wcDurationUs = Math.max(wcDurationUs, chunk.timestamp + (chunk.duration || 0));
+        pruneWebCodecsBuffer();
+      };
+      const errorHandler = (error) => {
+        setRecordStatus('录屏编码出错：' + ((error && error.message) || error), 'err');
+        stopRecording('录屏已停止。');
+      };
+      const candidates = [
+        { encoder: 'avc1.4d0028', muxer: 'avc' },
+        { encoder: 'avc1.42001f', muxer: 'avc' },
+        { encoder: 'avc1.4d0028', muxer: 'avc', hardwareAcceleration: 'prefer-software' },
+        { encoder: 'vp09.00.10.08', muxer: 'vp9' },
+        { encoder: 'av01.0.04M.08', muxer: 'av1' },
+      ];
+      let config = null;
+      let selectedEncoder = null;
+      let selectedMuxerCodec = 'avc';
+      for (const candidate of candidates) {
+        const options = { codec: candidate.encoder, width, height, bitrate, framerate: 30, latencyMode: 'quality' };
+        if (candidate.hardwareAcceleration) options.hardwareAcceleration = candidate.hardwareAcceleration;
+        try {
+          const support = await VideoEncoder.isConfigSupported(options);
+          if (!support || !support.supported) continue;
+          const encoder = new VideoEncoder({ output: outputHandler, error: errorHandler });
+          try {
+            encoder.configure(options);
+            selectedEncoder = encoder;
+            config = options;
+            selectedMuxerCodec = candidate.muxer;
+            break;
+          } catch (error) {
+            try { encoder.close(); } catch (e) { /* ignore */ }
+          }
+        } catch (e) { /* try next codec */ }
+      }
+      if (!config || !selectedEncoder) throw new Error('浏览器没有可用的视频编码器（H.264/VP9/AV1）');
+      wcEncoderConfig = config;
+      wcEncoder = selectedEncoder;
+      wcMuxerCodec = selectedMuxerCodec;
+      const wcCanvas = document.createElement('canvas');
+      wcCanvas.width = width;
+      wcCanvas.height = height;
+      const wcContext = wcCanvas.getContext('2d');
+      const encodeFrame = (frame) => {
+        const ts = frame.timestamp;
+        const keyFrame = wcChunks.length === 0 || ts - wcLastKeyAt >= 1000000;
+        if (keyFrame) wcLastKeyAt = ts;
+        if (frame.displayWidth === width && frame.displayHeight === height) {
+          wcEncoder.encode(frame, { keyFrame });
+        } else {
+          wcContext.drawImage(frame, 0, 0, width, height);
+          const outFrame = new VideoFrame(wcCanvas, { timestamp: ts });
+          wcEncoder.encode(outFrame, { keyFrame });
+          outFrame.close();
+        }
+      };
+      encodeFrame(firstFrame);
+      firstFrame.close();
+      wcActive = true;
+      (async () => {
+        try {
+          while (wcActive) {
+            const { value, done } = await wcReader.read();
+            if (done || !value) break;
+            if (!wcActive) { value.close(); break; }
+            encodeFrame(value);
+            value.close();
+          }
+        } catch (error) {
+          if (wcActive) {
+            setRecordStatus('录屏编码中断：' + ((error && error.message) || error), 'err');
+            stopRecording('录屏已停止。');
+          }
+        }
+      })();
+      return true;
+    };
+    const stopWebCodecsRecording = async () => {
+      wcActive = false;
+      try { if (wcReader) await wcReader.cancel(); } catch (e) { /* ignore */ }
+      try { if (wcEncoder) await wcEncoder.flush(); } catch (e) { /* ignore */ }
+      try { if (wcEncoder) wcEncoder.close(); } catch (e) { /* ignore */ }
+      wcEncoder = null;
+      wcReader = null;
+      pruneWebCodecsBuffer();
+    };
+    const buildWebCodecsClip = async (seconds) => {
+      if (!wcChunks.length) throw new Error('还没有可用的编码数据');
+      if (wcEncoder && wcActive) {
+        try { await wcEncoder.flush(); } catch (e) { /* ignore */ }
+      }
+      const last = wcChunks[wcChunks.length - 1];
+      const latestEnd = last.timestamp + (last.duration || 0);
+      const cutoff = latestEnd - seconds * 1000000;
+      let startIndex = 0;
+      for (let i = 0; i < wcChunks.length; i += 1) {
+        if (wcChunks[i].isKey && wcChunks[i].timestamp <= cutoff) startIndex = i;
+        else if (wcChunks[i].timestamp > cutoff) break;
+      }
+      const startTs = wcChunks[startIndex].timestamp;
+      const actualSeconds = Math.max(1, (latestEnd - startTs) / 1000000);
+      const muxer = new Mp4Muxer.Muxer({
+        target: new Mp4Muxer.ArrayBufferTarget(),
+        video: { codec: wcMuxerCodec, width: wcFrameWidth, height: wcFrameHeight },
+        fastStart: 'in-memory',
+      });
+      for (let i = startIndex; i < wcChunks.length; i += 1) {
+        const item = wcChunks[i];
+        const data = new Uint8Array(item.chunk.byteLength);
+        item.chunk.copyTo(data);
+        const nextTimestamp = i + 1 < wcChunks.length ? wcChunks[i + 1].timestamp : latestEnd;
+        let duration = item.duration || (nextTimestamp - item.timestamp) || 33333;
+        if (!Number.isFinite(duration) || duration <= 0) duration = 33333;
+        const adjusted = new EncodedVideoChunk({
+          type: item.chunk.type,
+          timestamp: item.timestamp - startTs,
+          duration: Math.max(1, Math.round(duration)),
+          data,
+        });
+        muxer.addVideoChunk(adjusted, i === startIndex ? wcDecoderMeta : undefined);
+      }
+      muxer.finalize();
+      return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), actualSeconds };
+    };
     const rotateRecordingSegment = async () => {
+      if (wcMode) return;
       if (!recordStream || !recorder || recorder.state !== 'recording' || saveBusy || rotating) return;
       rotating = true;
       try {
@@ -1179,14 +1394,41 @@
         recordStream = acquired.stream;
         recordSource = acquired.source;
         resetSegmentBuffer();
+        resetWebCodecsBuffer();
+        wcMode = false;
+        wcFailureReason = '';
         recordElapsedSeconds = 0;
         recordStartedAt = Date.now();
         segmentStartedAt = Date.now();
-        startRecorderOnStream();
+        if (canUseWebCodecs()) {
+          try {
+            await startWebCodecsRecording();
+            wcMode = true;
+          } catch (error) {
+            wcFailureReason = (error && error.message) || String(error);
+            wcMode = false;
+            resetWebCodecsBuffer();
+          }
+        } else {
+          if (!window.isSecureContext) {
+            wcFailureReason = `页面不是 HTTPS/安全上下文（${location.protocol}//${location.hostname}），WebCodecs 需要 HTTPS；可用桌面「游戏测试助手-快速录屏启动Chrome」重启`;
+          } else {
+            const missing = [];
+            if (!window.VideoEncoder) missing.push('VideoEncoder');
+            if (!window.VideoFrame) missing.push('VideoFrame');
+            if (!window.MediaStreamTrackProcessor) missing.push('MediaStreamTrackProcessor');
+            if (!window.EncodedVideoChunk) missing.push('EncodedVideoChunk');
+            if (!window.Mp4Muxer) missing.push('Mp4Muxer');
+            wcFailureReason = missing.length ? '缺少 ' + missing.join('/') : 'WebCodecs 不可用';
+          }
+        }
+        if (!wcMode) {
+          startRecorderOnStream();
+          if (segmentTimer) clearInterval(segmentTimer);
+          segmentTimer = setInterval(() => rotateRecordingSegment(), SEGMENT_MS);
+        }
         if (recordTimer) clearInterval(recordTimer);
         recordTimer = setInterval(updateRecordUi, 1000);
-        if (segmentTimer) clearInterval(segmentTimer);
-        segmentTimer = setInterval(() => rotateRecordingSegment(), SEGMENT_MS);
         setRecordStatus(recordLiveText(), 'warn');
         showToast(`${options.auto ? '已自动开始录屏' : '开始录屏'}：${recordSource}`);
       } catch (error) {
@@ -1229,6 +1471,7 @@
       setTimeout(attempt, 600);
     };
     const requestRecorderData = () => new Promise((resolve) => {
+      if (wcMode) { resolve(); return; }
       if (!recorder || recorder.state !== 'recording') { resolve(); return; }
       let settled = false;
       const finish = () => {
@@ -1425,34 +1668,50 @@
         saveNote = '（选择保存位置失败，已改为默认下载目录）';
       }
       const savingWhileRecording = recordActive();
-      if (savingWhileRecording) {
-        setRecordStatus('正在准备录像数据…（录制继续）');
-        await requestRecorderData();
-      }
-      const segmentBlobs = recordSegments.map((segment) => segment.blob);
-      if (recordChunks.length) {
-        const currentBlob = currentSegmentBlob();
-        if (currentBlob && currentBlob.size) segmentBlobs.push(currentBlob);
-      }
-      const totalBytes = segmentBlobs.reduce((sum, blob) => sum + (blob.size || 0), 0);
-      if (!segmentBlobs.length || totalBytes < 1024) {
+      if (wcMode && !wcChunks.length) {
         saveBusy = false;
         updateRecordUi();
         setRecordStatus('录像数据还在写入，请等 2~3 秒后再点保存。', 'warn');
         showToast('录像数据还在写入，请稍后再试');
         return;
       }
-      showToast(`正在生成点击前 ${seconds}s 视频…${savingWhileRecording ? '（录制继续）' : ''}`);
-      setRecordStatus(`正在生成点击前 ${seconds} 秒视频…${savingWhileRecording ? '（录制继续）' : ''}`);
+      let clip = null;
+      let actualSeconds = seconds;
       try {
-        let actualSeconds = seconds;
-        const clip = await trimRecordSegments(segmentBlobs, seconds, (elapsed, total) => {
-          actualSeconds = total;
-          setRecordStatus(`正在生成点击前 ${seconds} 秒视频… ${Math.min(Math.floor(total), Math.floor(elapsed))}/${Math.floor(total)}s${savingWhileRecording ? '（录制继续）' : ''}`);
-        });
+        if (wcMode) {
+          setRecordStatus(`正在封装 MP4…${savingWhileRecording ? '（录制继续）' : ''}`);
+          showToast(`正在封装点击前 ${seconds}s 视频…${savingWhileRecording ? '（录制继续）' : ''}`);
+          const built = await buildWebCodecsClip(seconds);
+          clip = built.blob;
+          actualSeconds = built.actualSeconds;
+        } else {
+          if (savingWhileRecording) {
+            setRecordStatus('正在准备录像数据…（录制继续）');
+            await requestRecorderData();
+          }
+          const segmentBlobs = recordSegments.map((segment) => segment.blob);
+          if (recordChunks.length) {
+            const currentBlob = currentSegmentBlob();
+            if (currentBlob && currentBlob.size) segmentBlobs.push(currentBlob);
+          }
+          const totalBytes = segmentBlobs.reduce((sum, blob) => sum + (blob.size || 0), 0);
+          if (!segmentBlobs.length || totalBytes < 1024) {
+            saveBusy = false;
+            updateRecordUi();
+            setRecordStatus('录像数据还在写入，请等 2~3 秒后再点保存。', 'warn');
+            showToast('录像数据还在写入，请稍后再试');
+            return;
+          }
+          showToast(`正在生成点击前 ${seconds}s 视频…${savingWhileRecording ? '（录制继续）' : ''}`);
+          setRecordStatus(`正在生成点击前 ${seconds} 秒视频…${savingWhileRecording ? '（录制继续）' : ''}`);
+          clip = await trimRecordSegments(segmentBlobs, seconds, (elapsed, total) => {
+            actualSeconds = total;
+            setRecordStatus(`正在生成点击前 ${seconds} 秒视频… ${Math.min(Math.floor(total), Math.floor(elapsed))}/${Math.floor(total)}s${savingWhileRecording ? '（录制继续）' : ''}`);
+          });
+        }
         const actualClipSeconds = Math.max(1, Math.round(actualSeconds));
         const shortNote = actualClipSeconds < seconds ? `（录像不足 ${seconds} 秒，按实际 ${actualClipSeconds} 秒导出）` : '';
-        const clipMime = (clip && clip.type) || mimeType;
+        const clipMime = (clip && clip.type) || 'video/mp4';
         const fileExt = String(clipMime).includes('mp4') ? 'mp4' : 'webm';
         const stamp = new Date();
         const pad = (value) => String(value).padStart(2, '0');
@@ -1767,7 +2026,7 @@
 
     window.__gameToolPanel = {
       getReplayCount: () => replayCount,
-      getRecordState: () => ({ active: recordActive(), chunks: recordChunks.length, bytes: recordBytes, segments: recordSegments.length, segmentsBytes: recordSegments.reduce((sum, segment) => sum + segment.bytes, 0), source: recordSource }),
+      getRecordState: () => ({ active: recordActive(), mode: wcMode ? 'webcodecs' : 'media', wcChunks: wcChunks.length, wcBytes, chunks: recordChunks.length, bytes: recordBytes, segments: recordSegments.length, segmentsBytes: recordSegments.reduce((sum, segment) => sum + segment.bytes, 0), source: recordSource }),
       settings,
       presets: NETWORK_PRESETS,
       applyPreset,

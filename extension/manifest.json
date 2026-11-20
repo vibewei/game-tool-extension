@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "游戏测试助手（连点/网络/录屏）",
-  "version": "1.8.2",
+  "version": "1.9.5",
   "description": "游戏测试助手：连点、弱网/断网模拟、自动录屏回放（保存点击前 15/30/60 秒）、可配置快捷键与插件启用域名。",
   "minimum_chrome_version": "111",
   "permissions": [
@@ -48,6 +48,7 @@
         "<all_urls>"
       ],
       "js": [
+        "vendor/mp4-muxer.min.js",
         "content.js"
       ],
       "run_at": "document_start",

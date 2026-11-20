@@ -175,7 +175,7 @@ background.js     后台脚本：工具栏图标 / Alt+G 切换面板，必要�
 page-inject.js    注入到页面（MAIN world）：包装 WebSocket（延迟/丢包/断网）和 fetch/XHR，并回传状态
 content.js        浮层面板（ISOLATED world）：连点设置、网络按钮、拖动、状态显示、持久化
 icons/            扩展图标
-docs/preview.png  预览图
+docs/preview.jpg  预览图
 ```
 
 - **连点**：在页面捕获真实点击后，按设定次数补发 `pointerdown/pointerup`。这个游戏只认 PointerEvent，所以补发 PointerEvent（已验证可正常推进剧情）。

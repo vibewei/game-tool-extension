@@ -172,6 +172,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) => sendResponse({ error: String((error && error.message) || error) }));
     return true;
   }
+  if (message.type === 'openOptions') {
+    try {
+      chrome.runtime.openOptionsPage(() => {
+        if (chrome.runtime.lastError) sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        else sendResponse({ ok: true });
+      });
+    } catch (error) {
+      sendResponse({ ok: false, error: String((error && error.message) || error) });
+    }
+    return true;
+  }
   if (message.type === 'openUpdatePage') {
     const url = String(message.url || '');
     if (!/^https:\/\//i.test(url)) {

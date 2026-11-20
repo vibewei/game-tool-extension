@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>游戏助手 · 设置</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #14171d; color: #e8eaed; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+    .page { max-width: 760px; margin: 0 auto; padding: 32px 22px 60px; }
+    h1 { font-size: 20px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+    h1 img { width: 24px; height: 24px; }
+    .sub { color: #8f96a3; font-size: 12px; margin-bottom: 24px; }
+    .section { background: #1b1f27; border: 1px solid rgba(255,255,255,0.09); border-radius: 12px; padding: 18px 20px; margin-bottom: 18px; }
+    .section h2 { font-size: 14px; margin: 0 0 6px; font-weight: 600; }
+    .desc { font-size: 12px; color: #8f96a3; line-height: 1.7; margin: 0 0 14px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 0; border-top: 1px solid rgba(255,255,255,0.06); }
+    .row:first-of-type { border-top: 0; }
+    .row-label { font-size: 13px; }
+    .row-hint { font-size: 11px; color: #737a87; margin-top: 2px; }
+    .switch { position: relative; width: 40px; height: 22px; flex: 0 0 auto; }
+    .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .slider { position: absolute; inset: 0; border-radius: 999px; background: rgba(255,255,255,0.18); cursor: pointer; transition: background .15s; }
+    .slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: transform .15s; }
+    .switch input:checked + .slider { background: #35d07f; }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+    textarea { width: 100%; min-height: 96px; resize: vertical; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; color: #e8eaed; padding: 9px 11px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.6; outline: none; }
+    textarea:focus, .hotkey-input:focus { border-color: #4f8cff; }
+    .hotkey-table { display: grid; grid-template-columns: 1fr 210px; gap: 2px 16px; align-items: center; }
+    .hotkey-row { display: contents; }
+    .hotkey-label { padding: 7px 0; border-top: 1px solid rgba(255,255,255,0.06); font-size: 13px; }
+    .hotkey-cell { padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.06); display: flex; gap: 6px; align-items: center; }
+    .hotkey-input { flex: 1; width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; color: #fff; font-size: 12px; padding: 6px 9px; outline: none; cursor: pointer; font-family: ui-monospace, Consolas, monospace; }
+    .reset-btn { all: unset; cursor: pointer; color: #8f96a3; font-size: 12px; padding: 4px 6px; border-radius: 5px; }
+    .reset-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .actions { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+    button.primary { cursor: pointer; border: 0; border-radius: 7px; background: #4f8cff; color: #fff; font-size: 13px; padding: 9px 20px; }
+    button.primary:hover { background: #639aff; }
+    button.ghost { cursor: pointer; border: 1px solid rgba(255,255,255,0.16); border-radius: 7px; background: transparent; color: #c7cbd3; font-size: 13px; padding: 8px 16px; }
+    button.ghost:hover { background: rgba(255,255,255,0.08); }
+    .status { font-size: 12px; color: #8f96a3; min-height: 18px; }
+    .status.ok { color: #63e6a4; }
+    .status.err { color: #ff8a8a; }
+    .note { font-size: 11.5px; color: #737a87; line-height: 1.7; margin-top: 10px; }
+    .hint { font-size: 11px; color: #737a87; }
+    @media (max-width: 560px) {
+      .hotkey-table { grid-template-columns: 1fr; }
+      .hotkey-row { display: block; }
+      .hotkey-label { border-top: 0; padding-top: 10px; }
+      .hotkey-cell { border-top: 0; padding-top: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1><img src="icons/icon48.png" alt="">游戏助手 · 设置</h1>
+    <div class="sub">设置会自动保存到浏览器扩展存储，页面里的助手会实时生效。当前版本 <span id="version">-</span></div>
+
+    <section class="section">
+      <h2>自动开启插件</h2>
+      <p class="desc">配置插件在哪些域名自动开启（页面加载后快捷键、自动录屏等功能生效）。其它域名默认不启用，可用扩展图标 / Alt+G 手动临时开启。</p>
+      <div class="row">
+        <div>
+          <div class="row-label">自动开始录屏（在已开启的页面）</div>
+          <div class="row-hint">关闭后需要手动点「开始录屏」或按快捷键</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="autoRecord"><span class="slider"></span></label>
+      </div>
+      <div class="row" style="display:block;">
+        <div class="row-label" style="margin-bottom:8px;">自动开启插件的域名</div>
+        <textarea id="enabledDomains" spellcheck="false" placeholder="*.m2time.net&#10;game.example.com"></textarea>
+        <div class="note">
+          每行一个域名，支持通配符：<code>*.m2time.net</code> 会匹配它和所有子域名。<br>
+          留空 = 所有页面自动开启；填写后，只有这些域名会自动启用插件（快捷键、自动录屏等），其它页面需要手动用扩展图标 / Alt+G 开启。
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>快捷键</h2>
+      <p class="desc">点输入框后直接按组合键即可修改；按 Backspace 清空（取消该快捷键），按 Esc 取消编辑。修改后点下方「保存设置」。</p>
+      <div class="hotkey-table" id="hotkeyTable"></div>
+      <div class="actions" style="margin-top:14px;">
+        <button class="ghost" id="resetHotkeys">恢复默认快捷键</button>
+        <span class="hint">快捷键在页面里生效；输入框聚焦时不会触发。</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>面板</h2>
+      <div class="row">
+        <div>
+          <div class="row-label">收起后显示悬浮入口胶囊</div>
+          <div class="row-hint">关闭后隐藏面板时不再出现「游戏助手」小胶囊，可通过快捷键或扩展图标重新打开</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="showRestorePill"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div>
+          <div class="row-label">紧凑模式</div>
+          <div class="row-hint">面板一次只展开一个区块，并隐藏辅助说明，减少占用面积</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="compactMode"><span class="slider"></span></label>
+      </div>
+      <div class="note">保存位置（选择目录）在页面面板的「录屏回放」区块里设置，因为目录授权绑定在当前页面。</div>
+    </section>
+
+    <div class="actions">
+      <button class="primary" id="saveBtn">保存设置</button>
+      <span class="status" id="status"></span>
+    </div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -11,7 +11,59 @@
   const STORAGE_KEY = 'gameToolSettings';
   const POSITION_KEY = 'gameToolPanelPosition';
   const RESTORE_POSITION_KEY = 'gameToolRestorePosition';
-  const VERSION = '1.5.2';
+  const VERSION = '1.8.1';
+
+  const DEFAULT_HOTKEYS = {
+    panelToggle: 'F8',
+    clickToggle: 'F7',
+    recordToggle: 'Alt+Shift+KeyR',
+    save15: 'Alt+Shift+KeyA',
+    save30: 'Alt+Shift+KeyS',
+    save60: 'Alt+Shift+KeyD',
+    net1: 'Alt+Shift+Digit1',
+    net2: 'Alt+Shift+Digit2',
+    net3: 'Alt+Shift+Digit3',
+    net4: 'Alt+Shift+Digit4',
+    net5: 'Alt+Shift+Digit5',
+    net6: 'Alt+Shift+Digit6',
+    net7: 'Alt+Shift+Digit7',
+    net8: 'Alt+Shift+Digit8',
+  };
+
+  const canonicalHotkey = (event) => {
+    const parts = [];
+    if (event.ctrlKey) parts.push('Ctrl');
+    if (event.altKey) parts.push('Alt');
+    if (event.shiftKey) parts.push('Shift');
+    if (event.metaKey) parts.push('Meta');
+    const code = event.code || '';
+    parts.push(code.startsWith('Key') || code.startsWith('Digit') ? code : (event.key || code));
+    return parts.join('+');
+  };
+
+  const domainMatches = (hostname, pattern) => {
+    const host = String(hostname || '').toLowerCase();
+    let rule = String(pattern || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '');
+    if (!rule) return false;
+    if (rule.startsWith('*.')) {
+      const base = rule.slice(2);
+      return host === base || host.endsWith('.' + base);
+    }
+    return host === rule || host.endsWith('.' + rule);
+  };
+
+  const displayHotkey = (combo) => String(combo || '')
+    .split('+')
+    .map((part) => {
+      if (part.startsWith('Key')) return part.slice(3);
+      if (part.startsWith('Digit')) return part.slice(5);
+      return part;
+    })
+    .join('+');
 
   const settings = {
     clickEnabled: false,
@@ -21,7 +73,13 @@
     showRestorePill: true,
     clickCollapsed: false,
     networkCollapsed: false,
-    settingsVersion: 5,
+    recordCollapsed: true,
+    autoRecord: true,
+    enabledDomains: [],
+    defaultSaveDir: true,
+    compactMode: true,
+    hotkeys: { ...DEFAULT_HOTKEYS },
+    settingsVersion: 11,
   };
 
   // 网络场景预设（快捷键 Alt+Shift+1~8 对应前 8 个）
@@ -81,6 +139,8 @@
     .gt-net-badge { margin-left: auto; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: rgba(53,208,127,0.16); color: #63e6a4; }
     .gt-net-badge.weak { background: rgba(240,180,60,0.16); color: #f4c15a; }
     .gt-net-badge.offline { background: rgba(240,80,80,0.18); color: #ff7b7b; }
+    .gt-gear { all: unset; cursor: pointer; width: 20px; height: 20px; line-height: 18px; text-align: center; border-radius: 5px; color: #aeb4bf; font-size: 13px; }
+    .gt-gear:hover { background: rgba(255,255,255,0.12); color: #fff; }
     .gt-min { all: unset; cursor: pointer; width: 20px; height: 20px; line-height: 18px; text-align: center; border-radius: 5px; color: #aeb4bf; font-size: 14px; }
     .gt-min:hover { background: rgba(255,255,255,0.12); color: #fff; }
     .gt-body { padding: 10px 12px 8px; }
@@ -91,15 +151,33 @@
     .gt-sec-head:hover .gt-sec-toggle { background: rgba(255,255,255,0.12); color: #fff; }
     .gt-sec-toggle svg { width: 14px; height: 14px; transition: transform 0.15s ease; }
     .gt-sec-toggle.collapsed svg { transform: rotate(180deg); }
+    .gt-save-btn { all: unset; cursor: pointer; font-size: 11px; color: #9dc0ff; border: 1px solid rgba(79,140,255,0.35); padding: 3px 7px; border-radius: 5px; white-space: nowrap; }
+    .gt-save-btn:hover { background: rgba(79,140,255,0.18); color: #cfe0ff; }
+    .gt-save-btn:disabled { opacity: 0.45; cursor: default; }
+    .gt-kbd { display: inline-block; margin-left: 4px; padding: 0 3px; border-radius: 3px; font-size: 9px; line-height: 13px; color: #aeb4bf; background: rgba(255,255,255,0.12); }
+    .gt-rec-btn { all: unset; cursor: pointer; font-size: 11.5px; color: #cfe0ff; background: rgba(79,140,255,0.18); padding: 4px 10px; border-radius: 6px; white-space: nowrap; }
+    .gt-rec-btn:hover { background: rgba(79,140,255,0.3); }
+    .gt-rec-btn.recording { background: rgba(240,80,80,0.2); color: #ffb3b3; }
+    .gt-rec-btn:disabled { opacity: 0.55; cursor: default; }
+    .gt-loc-btn { all: unset; cursor: pointer; font-size: 11px; color: #9dc0ff; border: 1px solid rgba(79,140,255,0.35); padding: 3px 8px; border-radius: 5px; white-space: nowrap; }
+    .gt-loc-btn:hover { background: rgba(79,140,255,0.18); color: #cfe0ff; }
     .gt-sec-body.collapsed { display: none; }
+    .gt-panel.gt-compact .gt-help { display: none; }
+    .gt-panel.gt-compact .gt-body { padding: 7px 10px 6px; max-height: calc(100vh - 150px); overflow-y: auto; overscroll-behavior: contain; }
+    .gt-panel.gt-compact .gt-section { padding: 5px 0; }
+    .gt-panel.gt-compact .gt-row { margin: 4px 0; }
+    .gt-panel.gt-compact .gt-sec-head { padding: 2px 0; }
+    .gt-panel.gt-compact .gt-foot { margin-top: 4px; padding-top: 6px; }
     .gt-section { padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.08); }
     .gt-section:first-child { border-top: 0; padding-top: 2px; }
     .gt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0; }
     .gt-label { font-size: 12px; color: #c7cbd3; flex: 0 0 auto; }
     .gt-small { font-size: 10px; color: #8f96a3; }
-    .gt-tip { font-size: 10.5px; line-height: 1.5; color: #8f96a3; margin-top: 6px; }
+    .gt-tip { font-size: 10.5px; line-height: 1.5; color: #8f96a3; margin-top: 6px; overflow-wrap: anywhere; word-break: break-word; }
+    #gt-save-loc-status { overflow-wrap: anywhere; word-break: break-all; }
     .gt-tip.warn { color: #f4c15a; }
     .gt-tip.err { color: #ff8a8a; }
+    .gt-tip.ok { color: #63e6a4; }
     input[type="number"] { width: 66px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; color: #fff; font-size: 12px; padding: 3px 6px; outline: none; text-align: right; }
     input[type="number"]:focus { border-color: #4f8cff; }
     select { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; color: #fff; font-size: 11.5px; padding: 3px 4px; outline: none; max-width: 130px; }
@@ -155,7 +233,8 @@
           <span class="gt-dot"></span>
           <span class="gt-title">游戏助手</span>
           <span class="gt-net-badge" id="gt-net-badge">正常</span>
-          <button class="gt-min" id="gt-min" title="收起 (F8)">—</button>
+          <button class="gt-gear" id="gt-open-options" title="打开设置">⚙</button>
+          <button class="gt-min" id="gt-min" title="收起面板">—</button>
         </div>
         <div class="gt-body" id="gt-body">
           <div class="gt-section">
@@ -189,7 +268,7 @@
                   <option value="trusted">真实输入（调试器）</option>
                 </select>
               </div>
-              <div class="gt-tip">升级/抽卡等有动画的按钮，补点间隔建议 ≥300ms；仍不响应再换「真实输入（调试器）」。</div>
+              <div class="gt-tip gt-help">升级/抽卡等有动画的按钮，补点间隔建议 ≥300ms；仍不响应再换「真实输入（调试器）」。</div>
               <div class="gt-tip" id="gt-click-status">开启后：在游戏里点 1 次 = 自动点击设定次数</div>
             </div>
           </div>
@@ -223,17 +302,47 @@
               <div class="gt-tip" id="gt-net-status">当前网络：正常</div>
             </div>
           </div>
+          <div class="gt-section">
+            <div class="gt-sec-head" id="gt-record-head" role="button" tabindex="0" title="收起/展开录屏回放">
+              <span class="gt-sec-title">录屏回放</span>
+              <span class="gt-small" id="gt-record-summary">未录制</span>
+              <span class="gt-sec-toggle" id="gt-toggle-record">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
+              </span>
+            </div>
+            <div class="gt-sec-body" id="gt-record-body">
+              <div class="gt-row">
+                <span class="gt-label">当前页录屏</span>
+                <button class="gt-rec-btn" id="gt-record-toggle" title="开始/停止录屏（Alt+Shift+R）">开始录屏</button>
+              </div>
+              <div class="gt-row">
+                <span class="gt-label">保存位置</span>
+                <button class="gt-loc-btn" id="gt-choose-save-dir" title="选择视频保存目录">选择目录</button>
+              </div>
+              <div class="gt-row">
+                <span class="gt-label">默认保存到此位置</span>
+                <label class="gt-switch gt-switch-sm"><input type="checkbox" id="gt-default-save-dir"><span class="gt-slider"></span></label>
+              </div>
+              <div class="gt-tip" id="gt-save-loc-status">当前：浏览器默认下载目录；可点「选择目录」指定文件夹。</div>
+              <div class="gt-row">
+                <span class="gt-label">保存点击前</span>
+                <span class="gt-save-btns">
+                  <button class="gt-save-btn" data-seconds="15" title="保存点击前 15 秒（Alt+Shift+A）" disabled>15s<span class="gt-kbd">A</span></button>
+                  <button class="gt-save-btn" data-seconds="30" title="保存点击前 30 秒（Alt+Shift+S）" disabled>30s<span class="gt-kbd">S</span></button>
+                  <button class="gt-save-btn" data-seconds="60" title="保存点击前 60 秒（Alt+Shift+D）" disabled>60s<span class="gt-kbd">D</span></button>
+                </span>
+              </div>
+              <div class="gt-tip" id="gt-record-status">录制缓存会自动保存在内存；自动录屏、快捷键和域名配置在设置页。</div>
+              <div class="gt-tip gt-help">视频默认保存为 MP4（浏览器不支持时自动回退 WebM）；生成时录制继续，不足所选秒数时按实际时长导出。</div>
+            </div>
+          </div>
           <div class="gt-foot">
             <div class="gt-foot-row">
               <span>游戏助手 v${VERSION}</span>
               <button class="gt-update-btn" id="gt-check-update" title="从代码仓库检查更新">检查更新</button>
             </div>
             <div class="gt-update-status" id="gt-update-status"></div>
-            <div class="gt-foot-row">
-              <span>收起后显示入口胶囊</span>
-              <label class="gt-switch gt-switch-sm"><input type="checkbox" id="gt-show-pill"><span class="gt-slider"></span></label>
-            </div>
-            <div>F8 面板 · F7 连点 · Alt+Shift+1~8 网络场景</div>
+            <div>Alt+G 面板 · 快捷键可在设置页修改</div>
           </div>
         </div>
       </div>
@@ -494,6 +603,18 @@
       networkHead: shadow.getElementById('gt-network-head'),
       networkBody: shadow.getElementById('gt-network-body'),
       networkToggle: shadow.getElementById('gt-toggle-network'),
+      recordHead: shadow.getElementById('gt-record-head'),
+      recordBody: shadow.getElementById('gt-record-body'),
+      recordSecToggle: shadow.getElementById('gt-toggle-record'),
+      recordSummary: shadow.getElementById('gt-record-summary'),
+      recToggle: shadow.getElementById('gt-record-toggle'),
+      autoRecord: shadow.getElementById('gt-auto-record'),
+      chooseSaveDir: shadow.getElementById('gt-choose-save-dir'),
+      defaultSaveDir: shadow.getElementById('gt-default-save-dir'),
+      saveLocStatus: shadow.getElementById('gt-save-loc-status'),
+      saveBtns: Array.from(shadow.querySelectorAll('.gt-save-btn')),
+      recordStatus: shadow.getElementById('gt-record-status'),
+      restoreHide: shadow.getElementById('gt-restore-hide'),
       netBadge: shadow.getElementById('gt-net-badge'),
       min: shadow.getElementById('gt-min'),
       restore: shadow.getElementById('gt-restore'),
@@ -513,8 +634,7 @@
       conn: shadow.getElementById('gt-conn'),
       checkUpdate: shadow.getElementById('gt-check-update'),
       updateStatus: shadow.getElementById('gt-update-status'),
-      showPill: shadow.getElementById('gt-show-pill'),
-      restoreHide: shadow.getElementById('gt-restore-hide'),
+      openOptions: shadow.getElementById('gt-open-options'),
       toast: shadow.getElementById('gt-toast'),
     };
 
@@ -530,17 +650,32 @@
     refs.restore.style.pointerEvents = 'auto';
 
     // 设置同步
+    const sectionState = {
+      click: { body: 'clickBody', toggle: 'clickToggle', get: () => settings.clickCollapsed, set: (v) => { settings.clickCollapsed = v; } },
+      network: { body: 'networkBody', toggle: 'networkToggle', get: () => settings.networkCollapsed, set: (v) => { settings.networkCollapsed = v; } },
+      record: { body: 'recordBody', toggle: 'recordSecToggle', get: () => settings.recordCollapsed, set: (v) => { settings.recordCollapsed = v; } },
+    };
     const applySectionCollapsed = (section, collapsed) => {
-      if (section === 'network') settings.networkCollapsed = !!collapsed;
-      else settings.clickCollapsed = !!collapsed;
-      const body = section === 'network' ? refs.networkBody : refs.clickBody;
-      const toggle = section === 'network' ? refs.networkToggle : refs.clickToggle;
-      if (body) body.classList.toggle('collapsed', !!collapsed);
-      if (toggle) toggle.classList.toggle('collapsed', !!collapsed);
+      const info = sectionState[section];
+      if (!info) return;
+      info.set(!!collapsed);
+      if (refs[info.body]) refs[info.body].classList.toggle('collapsed', !!collapsed);
+      if (refs[info.toggle]) refs[info.toggle].classList.toggle('collapsed', !!collapsed);
+    };
+    const applyCompactMode = () => {
+      if (refs.panel) refs.panel.classList.toggle('gt-compact', !!settings.compactMode);
+      if (host) host.dataset.compact = settings.compactMode ? '1' : '0';
     };
     const toggleSection = (section) => {
-      if (section === 'network') applySectionCollapsed('network', !settings.networkCollapsed);
-      else applySectionCollapsed('click', !settings.clickCollapsed);
+      const info = sectionState[section];
+      if (!info) return;
+      const expanding = info.get();
+      applySectionCollapsed(section, !expanding);
+      if (settings.compactMode && expanding) {
+        Object.keys(sectionState).forEach((other) => {
+          if (other !== section) applySectionCollapsed(other, true);
+        });
+      }
       saveSettings();
     };
     const syncFromSettings = () => {
@@ -548,9 +683,37 @@
       refs.clickCount.value = settings.clickCount;
       refs.clickInterval.value = settings.clickIntervalMs;
       refs.replayMode.value = settings.replayMode;
-      refs.showPill.checked = !!settings.showRestorePill;
+      if (refs.defaultSaveDir) refs.defaultSaveDir.checked = !!settings.defaultSaveDir;
       applySectionCollapsed('click', settings.clickCollapsed);
       applySectionCollapsed('network', settings.networkCollapsed);
+      applySectionCollapsed('record', settings.recordCollapsed);
+      applyCompactMode();
+      if (settings.compactMode) {
+        const expanded = ['click', 'network', 'record'].filter((key) => !sectionState[key].get());
+        if (expanded.length > 1) {
+          ['network', 'record'].forEach((key) => applySectionCollapsed(key, true));
+        }
+      }
+      const hotkeys = settings.hotkeys || DEFAULT_HOTKEYS;
+      if (refs.recToggle) refs.recToggle.title = `开始/停止录屏（${displayHotkey(hotkeys.recordToggle)}）`;
+      if (refs.saveBtns) {
+        refs.saveBtns.forEach((btn) => {
+          const seconds = btn.dataset.seconds;
+          const action = seconds === '15' ? 'save15' : seconds === '30' ? 'save30' : 'save60';
+          const combo = displayHotkey(hotkeys[action]);
+          btn.title = `保存点击前 ${seconds} 秒（${combo}）`;
+          const badge = btn.querySelector('.gt-kbd');
+          if (badge) badge.textContent = combo.split('+').pop() || '';
+        });
+      }
+      if (refs.restoreHide) refs.restoreHide.title = `隐藏入口（${displayHotkey(hotkeys.panelToggle)} 可重新打开）`;
+      if (refs.modes) {
+        const presetAction = { normal: 'net1', weak: 'net2', severe: 'net3', jitter: 'net4', loss: 'net5', latency: 'net6', offline: 'net7', offline10: 'net8' };
+        refs.modes.querySelectorAll('.gt-mode[data-preset]').forEach((btn) => {
+          const action = presetAction[btn.dataset.preset];
+          if (action) btn.title = `${btn.textContent}（${displayHotkey(hotkeys[action])}）`;
+        });
+      }
       updateClickStatus();
     };
     syncFromSettings();
@@ -579,11 +742,14 @@
       saveSettings();
       updateClickStatus();
     });
-    refs.showPill.addEventListener('change', () => {
-      settings.showRestorePill = refs.showPill.checked;
-      saveSettings();
-      if (!settings.showRestorePill && panelHidden) refs.restore.classList.remove('show');
-    });
+    if (refs.defaultSaveDir) {
+      refs.defaultSaveDir.addEventListener('change', () => {
+        settings.defaultSaveDir = refs.defaultSaveDir.checked;
+        saveSettings();
+        updateSaveLocationUi();
+        setRecordStatus(settings.defaultSaveDir ? '已开启默认保存位置。' : '已关闭默认保存位置，每次保存会弹出位置选择。');
+      });
+    }
 
     // 网络场景
     const clearAutoRestore = () => {
@@ -656,34 +822,15 @@
     });
     refs.applyCustom.addEventListener('click', applyCustomNetwork);
 
-    // 网络场景快捷键：Alt+Shift+1~8
-    const NETWORK_SHORTCUT_MAP = {
-      Digit1: 'normal',
-      Digit2: 'weak',
-      Digit3: 'severe',
-      Digit4: 'jitter',
-      Digit5: 'loss',
-      Digit6: 'latency',
-      Digit7: 'offline',
-      Digit8: 'offline10',
-    };
-    window.addEventListener(
-      'keydown',
-      (event) => {
-        if (!event.altKey || !event.shiftKey) return;
-        const presetKey = NETWORK_SHORTCUT_MAP[event.code];
-        if (!presetKey) return;
-        const tag = (document.activeElement && document.activeElement.tagName) || '';
-        if (/INPUT|TEXTAREA|SELECT/.test(tag)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        applyPreset(presetKey);
-      },
-      true,
-    );
-
     // 收起 / 展开（悬浮胶囊的展开逻辑在 pointerup 里处理，拖动时不会误触展开）
     refs.min.addEventListener('click', () => setPanelHidden(true));
+    refs.openOptions.addEventListener('click', () => {
+      try {
+        chrome.runtime.sendMessage({ __gameToolBg: true, type: 'openOptions' });
+      } catch (e) {
+        try { window.open(chrome.runtime.getURL('options.html')); } catch (e2) { /* 非扩展环境忽略 */ }
+      }
+    });
 
     // 连点设置 / 网络场景：两个区块分别收起、展开
     const onSectionHeadClick = (section) => (event) => {
@@ -698,8 +845,10 @@
     };
     refs.clickHead.addEventListener('click', onSectionHeadClick('click'));
     refs.networkHead.addEventListener('click', onSectionHeadClick('network'));
+    refs.recordHead.addEventListener('click', onSectionHeadClick('record'));
     refs.clickHead.addEventListener('keydown', onSectionHeadKey('click'));
     refs.networkHead.addEventListener('keydown', onSectionHeadKey('network'));
+    refs.recordHead.addEventListener('keydown', onSectionHeadKey('record'));
 
     // 检查更新：从代码仓库读取 version.json，比较版本号
     let pendingUpdateUrl = '';
@@ -756,6 +905,586 @@
     };
     refs.checkUpdate.addEventListener('click', runUpdateCheck);
 
+    // ---------------- 录屏回放（保存点击前 N 秒） ----------------
+    let recordStream = null;
+    let recordSource = '';
+    let recorder = null;
+    let recordChunks = [];
+    let recordBytes = 0;
+    let recordStartedAt = 0;
+    let recordElapsedSeconds = 0;
+    let recordTimer = null;
+    let saveBusy = false;
+    const SAVE_DIR_DB_NAME = 'gameToolFileHandles';
+    const SAVE_DIR_STORE = 'handles';
+    const SAVE_DIR_KEY = 'saveDirectory';
+    let saveDirectoryHandle = null;
+    let saveDirectoryName = '';
+    const openSaveDirDb = () => new Promise((resolve, reject) => {
+      if (!window.indexedDB) { reject(new Error('当前环境不支持目录记忆')); return; }
+      const request = indexedDB.open(SAVE_DIR_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(SAVE_DIR_STORE)) request.result.createObjectStore(SAVE_DIR_STORE);
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('打开目录存储失败'));
+    });
+    const rememberSaveDirectory = async (handle) => {
+      const db = await openSaveDirDb();
+      await new Promise((resolve, reject) => {
+        const transaction = db.transaction(SAVE_DIR_STORE, 'readwrite');
+        transaction.objectStore(SAVE_DIR_STORE).put(handle, SAVE_DIR_KEY);
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+      });
+    };
+    const loadRememberedSaveDirectory = async () => {
+      const db = await openSaveDirDb();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(SAVE_DIR_STORE, 'readonly');
+        const request = transaction.objectStore(SAVE_DIR_STORE).get(SAVE_DIR_KEY);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => reject(request.error);
+      });
+    };
+    const ensureDirectoryPermission = async (handle) => {
+      if (!handle) return false;
+      try {
+        if (typeof handle.queryPermission === 'function') {
+          let permission = await handle.queryPermission({ mode: 'readwrite' });
+          if (permission === 'granted') return true;
+          if (typeof handle.requestPermission === 'function') permission = await handle.requestPermission({ mode: 'readwrite' });
+          return permission === 'granted';
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    };
+    const writeBlobToFileHandle = async (handle, blob) => {
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    };
+    const writeBlobToDirectory = async (handle, blob, filename) => {
+      const fileHandle = await handle.getFileHandle(filename, { create: true });
+      await writeBlobToFileHandle(fileHandle, blob);
+    };
+    const updateSaveLocationUi = () => {
+      if (!refs || !refs.saveLocStatus) return;
+      const mode = settings.defaultSaveDir ? '默认' : '每次询问';
+      let text;
+      if (saveDirectoryHandle) {
+        text = `当前保存位置：${saveDirectoryName || '已选目录'}（${mode}）`;
+        refs.saveLocStatus.title = `目录：${saveDirectoryName || '已选目录'}（浏览器仅提供目录名，不暴露完整路径）`;
+      } else {
+        text = `当前保存位置：浏览器下载目录（${mode}）`;
+        refs.saveLocStatus.title = '未选择自定义目录';
+      }
+      refs.saveLocStatus.textContent = text;
+    };
+    const buildReplayTimestamp = () => {
+      const stamp = new Date();
+      const pad = (value) => String(value).padStart(2, '0');
+      return `${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}${pad(stamp.getSeconds())}`;
+    };
+    const chooseSaveDirectory = async () => {
+      if (!window.showDirectoryPicker) {
+        setRecordStatus('当前浏览器不支持选择目录，将保存到浏览器默认下载目录。', 'warn');
+        return;
+      }
+      try {
+        const handle = await window.showDirectoryPicker({ mode: 'readwrite', id: 'gameToolSaveDir' });
+        saveDirectoryHandle = handle;
+        saveDirectoryName = handle.name || '已选目录';
+        try { await rememberSaveDirectory(handle); } catch (e) { /* 目录记忆失败不影响本次使用 */ }
+        settings.defaultSaveDir = true;
+        if (refs.defaultSaveDir) refs.defaultSaveDir.checked = true;
+        saveSettings();
+        updateSaveLocationUi();
+        setRecordStatus(`已选择目录：${saveDirectoryName}`, 'ok');
+        showToast(`已选择目录：${saveDirectoryName}`);
+      } catch (error) {
+        if (error && error.name !== 'AbortError') setRecordStatus('选择目录失败：' + ((error && error.message) || error), 'err');
+      }
+    };
+    // 录制缓冲用 WebM（chunk 稳定、延迟低），最终导出再转成 MP4
+    const BUFFER_MIME_CANDIDATES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    const OUTPUT_MIME_CANDIDATES = [
+      'video/mp4;codecs=avc1.42E01E',
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ];
+    const pickBufferMime = () => (window.MediaRecorder && BUFFER_MIME_CANDIDATES.find((type) => MediaRecorder.isTypeSupported(type))) || 'video/webm';
+    const pickOutputMime = () => (window.MediaRecorder && OUTPUT_MIME_CANDIDATES.find((type) => MediaRecorder.isTypeSupported(type))) || 'video/webm';
+    const REC_MAX_BYTES = 300 * 1024 * 1024;
+    const fmtSeconds = (seconds) => {
+      const total = Math.max(0, Math.floor(seconds));
+      return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    };
+    const setRecordStatus = (text, level) => {
+      if (!refs.recordStatus) return;
+      refs.recordStatus.textContent = text || '';
+      refs.recordStatus.className = 'gt-tip' + (level ? ' ' + level : '');
+    };
+    const recordActive = () => !!(recorder && recorder.state === 'recording');
+    let recordRestoreTimer = null;
+    const clearRecordRestore = () => {
+      if (recordRestoreTimer) {
+        clearTimeout(recordRestoreTimer);
+        recordRestoreTimer = null;
+      }
+    };
+    const recordLiveText = () => `录制中（${recordSource}）：出现问题时，点 15s / 30s / 60s 或按 ${displayHotkey((settings.hotkeys || DEFAULT_HOTKEYS).save30)} 导出点击前录像。`;
+    const updateRecordUi = () => {
+      const active = recordActive();
+      const bufferText = recordBytes >= 1048576 ? `${Math.round(recordBytes / 1048576)}MB` : `${Math.max(1, Math.round(recordBytes / 1024))}KB`;
+      if (refs.recordSummary) {
+        refs.recordSummary.textContent = active
+          ? '录制中 ' + fmtSeconds((Date.now() - recordStartedAt) / 1000)
+          : recordChunks.length
+            ? '可保存 ' + bufferText
+            : '未录制';
+      }
+      if (refs.recToggle) {
+        refs.recToggle.textContent = active ? '停止录屏' : '开始录屏';
+        refs.recToggle.classList.toggle('recording', active);
+      }
+      if (refs.saveBtns) refs.saveBtns.forEach((btn) => { btn.disabled = saveBusy || recordChunks.length === 0; });
+    };
+    const stopRecordTracks = () => {
+      if (!recordStream) return;
+      try { recordStream.getTracks().forEach((track) => track.stop()); } catch (e) { /* ignore */ }
+      recordStream = null;
+    };
+    const resetRecordBuffer = () => {
+      recordChunks = [];
+      recordBytes = 0;
+    };
+    const stopRecording = (message) => {
+      clearRecordRestore();
+      recordElapsedSeconds = recordStartedAt ? (Date.now() - recordStartedAt) / 1000 : recordElapsedSeconds;
+      const hadChunks = recordChunks.length > 0;
+      if (recorder && recorder.state !== 'inactive') {
+        try { recorder.stop(); } catch (e) { /* ignore */ }
+      }
+      recorder = null;
+      if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
+      stopRecordTracks();
+      updateRecordUi();
+      setRecordStatus(message || (hadChunks ? '录屏已停止；仍可点 15s/30s/60s 保存已缓存片段。' : '录屏已停止。'));
+    };
+    const startRecorderOnStream = () => {
+      const mimeType = pickBufferMime();
+      recorder = new MediaRecorder(recordStream, { mimeType, videoBitsPerSecond: 2500000 });
+      recorder.recordMimeType = mimeType;
+      recorder.ondataavailable = (event) => {
+        if (!event.data || !event.data.size) return;
+        recordChunks.push(event.data);
+        recordBytes += event.data.size;
+        updateRecordUi();
+        if (recordBytes > REC_MAX_BYTES) {
+          stopRecording('录像缓存超过 300MB，已自动停止；请先点 15s/30s/60s 保存，或重新开始录屏。');
+        }
+      };
+      recorder.onerror = (event) => {
+        setRecordStatus('录屏出错：' + ((event.error && event.error.message) || '未知错误'), 'err');
+        stopRecording('录屏已停止。');
+      };
+      recorder.start(1000);
+      updateRecordUi();
+    };
+    const acquireRecordStream = async (allowDisplay = true) => {
+      // 优先直接录页面里的 canvas（游戏画面），不需要选择窗口，也不会录到面板
+      const canvases = Array.from(document.querySelectorAll('canvas')).filter((canvas) => canvas.width > 0 && canvas.height > 0);
+      let best = null;
+      let bestArea = 0;
+      canvases.forEach((canvas) => {
+        const area = canvas.width * canvas.height;
+        if (area > bestArea) { bestArea = area; best = canvas; }
+      });
+      if (best && typeof best.captureStream === 'function') {
+        try {
+          const stream = best.captureStream(30);
+          if (stream && stream.getVideoTracks().length) return { stream, source: '游戏画面' };
+        } catch (e) { /* 回退到标签页 */ }
+      }
+      if (!allowDisplay) throw new Error('当前页没有可自动录制的游戏画面');
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
+        throw new Error('当前页没有可录制的 canvas，也不支持标签页录屏');
+      }
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+      return { stream, source: '当前标签页' };
+    };
+    const startRecording = async (options = {}) => {
+      if (recordActive()) { stopRecording(); return; }
+      if (refs.recToggle) refs.recToggle.disabled = true;
+      setRecordStatus('正在开始录屏…');
+      try {
+        const acquired = await acquireRecordStream(!options.auto);
+        recordStream = acquired.stream;
+        recordSource = acquired.source;
+        resetRecordBuffer();
+        recordElapsedSeconds = 0;
+        recordStartedAt = Date.now();
+        startRecorderOnStream();
+        if (recordTimer) clearInterval(recordTimer);
+        recordTimer = setInterval(updateRecordUi, 1000);
+        setRecordStatus(recordLiveText(), 'warn');
+        showToast(`${options.auto ? '已自动开始录屏' : '开始录屏'}：${recordSource}`);
+      } catch (error) {
+        setRecordStatus('开始录屏失败：' + ((error && error.message) || error), 'err');
+        stopRecordTracks();
+      } finally {
+        if (refs.recToggle) refs.recToggle.disabled = false;
+        updateRecordUi();
+      }
+    };
+    let autoStartTimer = null;
+    let manualEnabled = false;
+    const pluginAutoEnabled = () => {
+      const list = Array.isArray(settings.enabledDomains) ? settings.enabledDomains : [];
+      if (!list.length) return true;
+      return list.some((rule) => domainMatches(location.hostname, rule));
+    };
+    const pluginActive = () => pluginAutoEnabled() || manualEnabled;
+    const maybeAutoStartRecording = () => {
+      if (!settings.autoRecord) return;
+      if (!pluginActive()) return;
+      if (recordActive() || recordChunks.length) return;
+      if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null; }
+      let tries = 0;
+      const attempt = () => {
+        if (!settings.autoRecord || recordActive() || recordChunks.length) return;
+        if (!pluginActive()) return;
+        const canvases = Array.from(document.querySelectorAll('canvas')).filter((canvas) => canvas.width > 0 && canvas.height > 0 && typeof canvas.captureStream === 'function');
+        if (canvases.length) {
+          startRecording({ auto: true });
+          return;
+        }
+        tries += 1;
+        if (tries <= 20) {
+          autoStartTimer = setTimeout(attempt, 1000);
+        } else {
+          setRecordStatus('自动录屏：当前页没有检测到游戏画面，请手动点「开始录屏」。', 'warn');
+        }
+      };
+      setTimeout(attempt, 600);
+    };
+    const requestRecorderData = () => new Promise((resolve) => {
+      if (!recorder || recorder.state !== 'recording') { resolve(); return; }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        recorder.removeEventListener('dataavailable', onData);
+        resolve();
+      };
+      const onData = () => finish();
+      recorder.addEventListener('dataavailable', onData);
+      try { recorder.requestData(); } catch (e) { finish(); return; }
+      setTimeout(finish, 1000);
+    });
+    const downloadBlob = (blob, filename) => {
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.style.display = 'none';
+      document.body.appendChild(anchor);
+      anchor.click();
+      setTimeout(() => {
+        try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ }
+        anchor.remove();
+      }, 20000);
+    };
+    const getVideoDuration = (video) => new Promise((resolve) => {
+      if (Number.isFinite(video.duration) && video.duration > 0) { resolve(video.duration); return; }
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        video.removeEventListener('timeupdate', onTime);
+        resolve(Number.isFinite(value) && value > 0 ? value : 0);
+      };
+      const onTime = () => { if (Number.isFinite(video.duration) && video.duration > 0) finish(video.duration); };
+      video.addEventListener('timeupdate', onTime);
+      try { video.currentTime = 1e101; } catch (e) { finish(0); }
+      setTimeout(() => finish(video.duration), 2500);
+    });
+    const trimRecordClip = async (blob, seconds, onProgress, availableSeconds = 0) => {
+      const url = URL.createObjectURL(blob);
+      const video = document.createElement('video');
+      video.src = url;
+      video.muted = true;
+      video.playsInline = true;
+      video.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;';
+      document.body.appendChild(video);
+      const cleanup = () => {
+        try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ }
+        video.remove();
+      };
+      try {
+        await new Promise((resolve, reject) => {
+          let attempt = 0;
+          const tryLoad = () => {
+            attempt += 1;
+            video.onloadedmetadata = () => resolve();
+            video.onerror = () => {
+              const code = video.error && video.error.code;
+              const detail = video.error && video.error.message;
+              if (attempt < 2) {
+                setTimeout(() => {
+                  try {
+                    video.removeAttribute('src');
+                    video.load();
+                    video.src = url;
+                  } catch (e) { /* ignore */ }
+                  tryLoad();
+                }, 300);
+                return;
+              }
+              reject(new Error(`无法读取录像数据（code=${code || '?'}${detail ? '，' + detail : ''}，blob=${blob.size}B，chunks=${recordChunks.length}）`));
+            };
+            video.src = url;
+            video.load();
+          };
+          tryLoad();
+        });
+        const duration = await getVideoDuration(video);
+        // 部分 MediaRecorder 产物 duration 元数据不准；用实际录制时长校正
+        const durationLooksWrong = !Number.isFinite(duration) || duration <= 0 || (availableSeconds > 3 && duration < Math.min(availableSeconds * 0.5, availableSeconds - 2));
+        const clipSeconds = Math.max(1, Math.min(seconds, durationLooksWrong ? (availableSeconds || seconds) : duration));
+        video.currentTime = durationLooksWrong ? 0 : duration > clipSeconds ? duration - clipSeconds : 0;
+        await new Promise((resolve) => {
+          let done = false;
+          const finishSeek = () => { if (done) return; done = true; resolve(); };
+          video.onseeked = finishSeek;
+          setTimeout(finishSeek, 1500);
+        });
+        const width = video.videoWidth || 1280;
+        const height = video.videoHeight || 720;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context2d = canvas.getContext('2d');
+        const captureStream = canvas.captureStream(30);
+        const mimeType = pickOutputMime();
+        const clipRecorder = new MediaRecorder(captureStream, { mimeType, videoBitsPerSecond: 2500000 });
+        const clipChunks = [];
+        clipRecorder.ondataavailable = (event) => { if (event.data && event.data.size) clipChunks.push(event.data); };
+        clipRecorder.start(500);
+        let frameHandle = null;
+        let drawing = true;
+        const drawFrame = () => {
+          if (!drawing) return;
+          try {
+            if (video.readyState >= 2) context2d.drawImage(video, 0, 0, width, height);
+          } catch (e) { /* ignore */ }
+          frameHandle = requestAnimationFrame(drawFrame);
+        };
+        drawFrame();
+        await video.play().catch(() => { /* ignore */ });
+        const startedAt = performance.now();
+        await new Promise((resolve) => {
+          const tick = () => {
+            const elapsed = (performance.now() - startedAt) / 1000;
+            if (onProgress) onProgress(elapsed, clipSeconds);
+            if (elapsed >= clipSeconds || video.ended) { resolve(); return; }
+            setTimeout(tick, 200);
+          };
+          setTimeout(tick, 200);
+        });
+        drawing = false;
+        if (frameHandle) cancelAnimationFrame(frameHandle);
+        await new Promise((resolve) => {
+          clipRecorder.onstop = () => resolve();
+          try { clipRecorder.stop(); } catch (e) { resolve(); }
+        });
+        try { captureStream.getTracks().forEach((track) => track.stop()); } catch (e) { /* ignore */ }
+        cleanup();
+        return new Blob(clipChunks, { type: mimeType });
+      } catch (error) {
+        cleanup();
+        throw error;
+      }
+    };
+    const saveRecordClip = async (seconds) => {
+      if (saveBusy) return;
+      if (!recordChunks.length) {
+        setRecordStatus('还没有录像缓存，请先点「开始录屏」。', 'err');
+        showToast('还没有录像缓存，请先开始录屏');
+        return;
+      }
+      saveBusy = true;
+      updateRecordUi();
+      clearRecordRestore();
+      let saveTarget = { mode: 'download' };
+      let saveNote = '';
+      try {
+        if (settings.defaultSaveDir && saveDirectoryHandle) {
+          const granted = await ensureDirectoryPermission(saveDirectoryHandle);
+          if (granted) saveTarget = { mode: 'directory', handle: saveDirectoryHandle, name: saveDirectoryName || '已选目录' };
+          else saveNote = '（目录权限未授权，已保存到默认下载目录）';
+        } else if (!settings.defaultSaveDir && typeof window.showSaveFilePicker === 'function') {
+          const guessExt = String(pickOutputMime()).includes('mp4') ? 'mp4' : 'webm';
+          const options = {
+            suggestedName: `游戏助手回放-${buildReplayTimestamp()}.${guessExt}`,
+            types: [{ description: '视频录像', accept: { 'video/mp4': ['.mp4'], 'video/webm': ['.webm'] } }],
+          };
+          if (saveDirectoryHandle) options.startIn = saveDirectoryHandle;
+          try {
+            const fileHandle = await window.showSaveFilePicker(options);
+            saveTarget = { mode: 'file', handle: fileHandle };
+          } catch (error) {
+            if (error && error.name === 'AbortError') {
+              saveBusy = false;
+              updateRecordUi();
+              setRecordStatus('已取消保存。');
+              return;
+            }
+            saveNote = '（无法选择保存位置，已改为默认下载目录）';
+          }
+        } else if (!settings.defaultSaveDir) {
+          saveNote = '（当前浏览器不支持选择保存位置，已保存到默认下载目录）';
+        }
+      } catch (error) {
+        saveNote = '（选择保存位置失败，已改为默认下载目录）';
+      }
+      const savingWhileRecording = recordActive();
+      if (savingWhileRecording) {
+        setRecordStatus('正在准备录像数据…（录制继续）');
+        await requestRecorderData();
+      }
+      const availableSeconds = recordActive() ? (Date.now() - recordStartedAt) / 1000 : recordElapsedSeconds;
+      const mimeType = (recordChunks[0] && recordChunks[0].type) || 'video/webm';
+      const blob = new Blob(recordChunks, { type: mimeType });
+      if (blob.size < 1024) {
+        saveBusy = false;
+        updateRecordUi();
+        setRecordStatus('录像数据还在写入，请等 2~3 秒后再点保存。', 'warn');
+        showToast('录像数据还在写入，请稍后再试');
+        return;
+      }
+      showToast(`正在生成点击前 ${seconds}s 视频…${savingWhileRecording ? '（录制继续）' : ''}`);
+      setRecordStatus(`正在生成点击前 ${seconds} 秒视频…${savingWhileRecording ? '（录制继续）' : ''}`);
+      try {
+        let actualSeconds = seconds;
+        const clip = await trimRecordClip(blob, seconds, (elapsed, total) => {
+          actualSeconds = total;
+          setRecordStatus(`正在生成点击前 ${seconds} 秒视频… ${Math.min(Math.floor(total), Math.floor(elapsed))}/${Math.floor(total)}s${savingWhileRecording ? '（录制继续）' : ''}`);
+        }, availableSeconds);
+        const actualClipSeconds = Math.max(1, Math.round(actualSeconds));
+        const shortNote = actualClipSeconds < seconds ? `（录像不足 ${seconds} 秒，按实际 ${actualClipSeconds} 秒导出）` : '';
+        const clipMime = (clip && clip.type) || mimeType;
+        const fileExt = String(clipMime).includes('mp4') ? 'mp4' : 'webm';
+        const stamp = new Date();
+        const pad = (value) => String(value).padStart(2, '0');
+        const filename = `游戏助手回放-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}${pad(stamp.getSeconds())}-前${actualClipSeconds}s.${fileExt}`;
+        let savedLocation = filename;
+        if (saveTarget.mode === 'directory') {
+          try {
+            await writeBlobToDirectory(saveTarget.handle, clip, filename);
+            savedLocation = `${saveTarget.name}/${filename}`;
+          } catch (error) {
+            downloadBlob(clip, filename);
+            saveNote = '（写入所选目录失败，已保存到默认下载目录）';
+          }
+        } else if (saveTarget.mode === 'file') {
+          try {
+            await writeBlobToFileHandle(saveTarget.handle, clip);
+            savedLocation = (saveTarget.handle && saveTarget.handle.name) || '所选位置';
+          } catch (error) {
+            downloadBlob(clip, filename);
+            saveNote = '（写入所选文件失败，已保存到默认下载目录）';
+          }
+        } else {
+          downloadBlob(clip, filename);
+        }
+        if (recordActive()) {
+          setRecordStatus(`已保存：${savedLocation}${shortNote}${saveNote}（录制继续，未停止）`, 'ok');
+          recordRestoreTimer = setTimeout(() => {
+            recordRestoreTimer = null;
+            if (recordActive()) setRecordStatus(recordLiveText(), 'warn');
+          }, 5000);
+        } else {
+          setRecordStatus(`已保存：${savedLocation}${shortNote}${saveNote}`, 'ok');
+        }
+        showToast(`已保存点击前 ${actualClipSeconds}s 视频${shortNote ? '（按实际时长）' : ''}${saveNote ? '（已回退默认目录）' : ''}${recordActive() ? '，录制继续' : ''}`);
+      } catch (error) {
+        setRecordStatus('生成失败：' + ((error && error.message) || error), 'err');
+        showToast('生成失败：' + ((error && error.message) || error));
+      } finally {
+        saveBusy = false;
+        updateRecordUi();
+      }
+    };
+    refs.recToggle.addEventListener('click', startRecording);
+    if (refs.chooseSaveDir) refs.chooseSaveDir.addEventListener('click', chooseSaveDirectory);
+    loadRememberedSaveDirectory()
+      .then((handle) => {
+        if (!handle) return;
+        saveDirectoryHandle = handle;
+        saveDirectoryName = handle.name || '已选目录';
+        updateSaveLocationUi();
+      })
+      .catch(() => { /* IndexedDB 不可用时忽略 */ });
+    updateSaveLocationUi();
+    if (refs.saveBtns) refs.saveBtns.forEach((btn) => btn.addEventListener('click', () => saveRecordClip(Number(btn.dataset.seconds) || 30)));
+
+    updateRecordUi();
+
+    // 可配置快捷键（在设置页修改）
+    const HOTKEY_ACTION_HANDLERS = {
+      panelToggle: () => setPanelHidden(!panelHidden),
+      clickToggle: () => {
+        settings.clickEnabled = !settings.clickEnabled;
+        saveSettings();
+        if (refs.clickEnabled) refs.clickEnabled.checked = settings.clickEnabled;
+        updateClickStatus();
+      },
+      recordToggle: () => {
+        if (recordActive()) {
+          stopRecording();
+          showToast('录屏已停止');
+        } else {
+          startRecording();
+        }
+      },
+      save15: () => saveRecordClip(15),
+      save30: () => saveRecordClip(30),
+      save60: () => saveRecordClip(60),
+      net1: () => applyPreset('normal'),
+      net2: () => applyPreset('weak'),
+      net3: () => applyPreset('severe'),
+      net4: () => applyPreset('jitter'),
+      net5: () => applyPreset('loss'),
+      net6: () => applyPreset('latency'),
+      net7: () => applyPreset('offline'),
+      net8: () => applyPreset('offline10'),
+    };
+    window.addEventListener(
+      'keydown',
+      (event) => {
+        if (!pluginActive()) return;
+        const tag = (document.activeElement && document.activeElement.tagName) || '';
+        if (/INPUT|TEXTAREA|SELECT/.test(tag)) return;
+        const combo = canonicalHotkey(event);
+        const hotkeys = settings.hotkeys || DEFAULT_HOTKEYS;
+        const entry = Object.entries(hotkeys).find(([, value]) => value === combo);
+        if (!entry) return;
+        const handler = HOTKEY_ACTION_HANDLERS[entry[0]];
+        if (!handler) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handler();
+      },
+      true,
+    );
+
     // 拖动：整块面板都可拖（按钮/输入框等控件除外），并记住面板位置
     const getPositionBounds = () => {
       const rect = refs.wrap.getBoundingClientRect();
@@ -779,6 +1508,12 @@
       refs.wrap.style.top = pos.top + 'px';
       refs.wrap.style.right = 'auto';
       refs.wrap.style.bottom = 'auto';
+    };
+    // 面板重新显示时把位置拉回窗口内，避免窗口变窄后右侧被裁掉
+    window.__gameToolClampPanel = () => {
+      if (!refs.wrap || !refs.wrap.style.left) return;
+      const rect = refs.wrap.getBoundingClientRect();
+      applyPosition(rect.left, rect.top);
     };
     const savePanelPosition = () => {
       try {
@@ -897,6 +1632,10 @@
     loadSettings(() => {
       syncFromSettings();
       if (savedPosition) applyPosition(savedPosition.left, savedPosition.top);
+      if (!recordActive() && !recordChunks.length) {
+        setRecordStatus(settings.autoRecord ? '自动录屏已开启；页面出现游戏画面后会自动开始录制。' : '自动录屏已关闭；可手动开始录屏或按快捷键。');
+      }
+      setTimeout(() => maybeAutoStartRecording(), 800);
     });
     updateNetUi({ mode: 'normal', stats: {}, sockets: 0 });
 
@@ -907,9 +1646,47 @@
     try {
       chrome.runtime.onMessage.addListener((message) => {
         if (!message || message.__gameToolBg !== true) return;
-        if (message.type === 'togglePanel') setPanelHidden(!panelHidden);
-        else if (message.type === 'showPanel') setPanelHidden(false);
-        else if (message.type === 'hidePanel') setPanelHidden(true);
+        if (message.type === 'togglePanel') {
+          manualEnabled = true;
+          setPanelHidden(!panelHidden);
+          setTimeout(() => maybeAutoStartRecording(), 300);
+        } else if (message.type === 'showPanel') {
+          manualEnabled = true;
+          setPanelHidden(false);
+          setTimeout(() => maybeAutoStartRecording(), 300);
+        } else if (message.type === 'hidePanel') {
+          setPanelHidden(true);
+        }
+      });
+    } catch (e) {
+      /* 本地调试（非扩展环境）下忽略 */
+    }
+
+    // 设置页修改后实时同步
+    try {
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== 'local' || !changes[STORAGE_KEY]) return;
+        const saved = changes[STORAGE_KEY].newValue || {};
+        if (typeof saved.autoRecord === 'boolean') settings.autoRecord = saved.autoRecord;
+        if (Array.isArray(saved.enabledDomains)) {
+          settings.enabledDomains = saved.enabledDomains.map((item) => String(item).trim()).filter(Boolean);
+        } else if (Array.isArray(saved.autoRecordDomains)) {
+          settings.enabledDomains = saved.autoRecordDomains.map((item) => String(item).trim()).filter(Boolean);
+        }
+        if (typeof saved.showRestorePill === 'boolean') settings.showRestorePill = saved.showRestorePill;
+        if (typeof saved.defaultSaveDir === 'boolean') settings.defaultSaveDir = saved.defaultSaveDir;
+        if (typeof saved.compactMode === 'boolean') settings.compactMode = saved.compactMode;
+        if (saved.hotkeys && typeof saved.hotkeys === 'object') {
+          const merged = { ...DEFAULT_HOTKEYS };
+          Object.keys(DEFAULT_HOTKEYS).forEach((key) => {
+            if (typeof saved.hotkeys[key] === 'string' && saved.hotkeys[key]) merged[key] = saved.hotkeys[key];
+          });
+          settings.hotkeys = merged;
+        }
+        syncFromSettings();
+        updateSaveLocationUi();
+        if (!settings.showRestorePill && panelHidden && refs.restore) refs.restore.classList.remove('show');
+        if (settings.autoRecord) setTimeout(() => maybeAutoStartRecording(), 300);
       });
     } catch (e) {
       /* 本地调试（非扩展环境）下忽略 */
@@ -917,6 +1694,7 @@
 
     window.__gameToolPanel = {
       getReplayCount: () => replayCount,
+      getRecordState: () => ({ active: recordActive(), chunks: recordChunks.length, bytes: recordBytes, source: recordSource }),
       settings,
       presets: NETWORK_PRESETS,
       applyPreset,
@@ -964,6 +1742,9 @@
       host.dataset.panelHidden = hidden ? '1' : '0';
       host.dataset.panelVisible = hidden ? '0' : '1';
     }
+    if (!hidden && typeof window.__gameToolClampPanel === 'function') {
+      setTimeout(() => window.__gameToolClampPanel(), 0);
+    }
   };
 
   const loadSettings = (done) => {
@@ -984,7 +1765,29 @@
           else if (oldCollapsed !== null) settings.clickCollapsed = oldCollapsed;
           if (typeof saved.networkCollapsed === 'boolean') settings.networkCollapsed = saved.networkCollapsed;
           else if (oldCollapsed !== null) settings.networkCollapsed = oldCollapsed;
-          settings.settingsVersion = 5;
+          if (typeof saved.recordCollapsed === 'boolean') settings.recordCollapsed = saved.recordCollapsed;
+          if (typeof saved.autoRecord === 'boolean') settings.autoRecord = saved.autoRecord;
+          if (typeof saved.defaultSaveDir === 'boolean') settings.defaultSaveDir = saved.defaultSaveDir;
+          if (Array.isArray(saved.enabledDomains)) {
+            settings.enabledDomains = saved.enabledDomains.map((item) => String(item).trim()).filter(Boolean);
+          } else if (Array.isArray(saved.autoRecordDomains)) {
+            settings.enabledDomains = saved.autoRecordDomains.map((item) => String(item).trim()).filter(Boolean);
+          }
+          if (saved.hotkeys && typeof saved.hotkeys === 'object') {
+            const merged = { ...DEFAULT_HOTKEYS };
+            Object.keys(DEFAULT_HOTKEYS).forEach((key) => {
+              if (typeof saved.hotkeys[key] === 'string' && saved.hotkeys[key]) merged[key] = saved.hotkeys[key];
+            });
+            settings.hotkeys = merged;
+          }
+          if (typeof saved.compactMode === 'boolean') settings.compactMode = saved.compactMode;
+          if (savedVersion < 10) {
+            settings.compactMode = true;
+            settings.clickCollapsed = false;
+            settings.networkCollapsed = true;
+            settings.recordCollapsed = true;
+          }
+          settings.settingsVersion = 11;
           const allowedReplayModes = ['auto', 'pointer', 'mouse', 'touch', 'trusted'];
           if (saved.replayMode && allowedReplayModes.includes(saved.replayMode)) settings.replayMode = saved.replayMode;
         }
@@ -1010,26 +1813,6 @@
       /* ignore */
     }
   };
-
-  // 快捷键 F8 显示/隐藏，F7 开关连点
-  window.addEventListener(
-    'keydown',
-    (event) => {
-      const tag = (document.activeElement && document.activeElement.tagName) || '';
-      if (/INPUT|TEXTAREA|SELECT/.test(tag)) return;
-      if (event.key === 'F8') {
-        event.preventDefault();
-        setPanelHidden(!panelHidden);
-      } else if (event.key === 'F7') {
-        event.preventDefault();
-        settings.clickEnabled = !settings.clickEnabled;
-        saveSettings();
-        if (refs.clickEnabled) refs.clickEnabled.checked = settings.clickEnabled;
-        updateClickStatus();
-      }
-    },
-    true,
-  );
 
   window.addEventListener('pointerdown', onUserPointerDown, true);
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "游戏连点 & 网络异常助手",
-  "version": "1.8.1",
-  "description": "设置点击次数后，在游戏里手动点一次自动补点到对应次数；一键模拟断网、弱网、丢包。所有网页可用。",
+  "name": "游戏测试助手（连点/网络/录屏）",
+  "version": "1.8.2",
+  "description": "游戏测试助手：连点、弱网/断网模拟、自动录屏回放（保存点击前 15/30/60 秒）、可配置快捷键与插件启用域名。",
   "minimum_chrome_version": "111",
   "permissions": [
     "storage",

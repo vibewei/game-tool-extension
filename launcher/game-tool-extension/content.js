@@ -11,7 +11,7 @@
   const STORAGE_KEY = 'gameToolSettings';
   const POSITION_KEY = 'gameToolPanelPosition';
   const RESTORE_POSITION_KEY = 'gameToolRestorePosition';
-  const VERSION = '1.8.1';
+  const VERSION = '1.8.2';
 
   const DEFAULT_HOTKEYS = {
     panelToggle: 'F8',
@@ -333,7 +333,7 @@
                 </span>
               </div>
               <div class="gt-tip" id="gt-record-status">录制缓存会自动保存在内存；自动录屏、快捷键和域名配置在设置页。</div>
-              <div class="gt-tip gt-help">视频默认保存为 MP4（浏览器不支持时自动回退 WebM）；生成时录制继续，不足所选秒数时按实际时长导出。</div>
+              <div class="gt-tip gt-help">视频默认保存为 MP4（浏览器不支持时自动回退 WebM）；录屏按 1 分钟分段滚动缓存，只保留最近约 1~2 分钟；生成时录制继续，不足所选秒数时按实际时长导出。</div>
             </div>
           </div>
           <div class="gt-foot">
@@ -915,6 +915,12 @@
     let recordElapsedSeconds = 0;
     let recordTimer = null;
     let saveBusy = false;
+    let recordSegments = [];
+    let segmentStartedAt = 0;
+    let segmentTimer = null;
+    let rotating = false;
+    const SEGMENT_MS = 60000;
+    const MAX_SEGMENTS = 2;
     const SAVE_DIR_DB_NAME = 'gameToolFileHandles';
     const SAVE_DIR_STORE = 'handles';
     const SAVE_DIR_KEY = 'saveDirectory';
@@ -1041,11 +1047,12 @@
     const recordLiveText = () => `录制中（${recordSource}）：出现问题时，点 15s / 30s / 60s 或按 ${displayHotkey((settings.hotkeys || DEFAULT_HOTKEYS).save30)} 导出点击前录像。`;
     const updateRecordUi = () => {
       const active = recordActive();
-      const bufferText = recordBytes >= 1048576 ? `${Math.round(recordBytes / 1048576)}MB` : `${Math.max(1, Math.round(recordBytes / 1024))}KB`;
+      const bytes = bufferedBytes();
+      const bufferText = bytes >= 1048576 ? `${Math.round(bytes / 1048576)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
       if (refs.recordSummary) {
         refs.recordSummary.textContent = active
           ? '录制中 ' + fmtSeconds((Date.now() - recordStartedAt) / 1000)
-          : recordChunks.length
+          : hasBufferedRecording()
             ? '可保存 ' + bufferText
             : '未录制';
       }
@@ -1053,41 +1060,65 @@
         refs.recToggle.textContent = active ? '停止录屏' : '开始录屏';
         refs.recToggle.classList.toggle('recording', active);
       }
-      if (refs.saveBtns) refs.saveBtns.forEach((btn) => { btn.disabled = saveBusy || recordChunks.length === 0; });
+      if (refs.saveBtns) refs.saveBtns.forEach((btn) => { btn.disabled = saveBusy || !hasBufferedRecording(); });
     };
     const stopRecordTracks = () => {
       if (!recordStream) return;
       try { recordStream.getTracks().forEach((track) => track.stop()); } catch (e) { /* ignore */ }
       recordStream = null;
     };
-    const resetRecordBuffer = () => {
+    const currentSegmentBlob = () => (recordChunks.length ? new Blob(recordChunks, { type: recordChunks[0].type || 'video/webm' }) : null);
+    const pushCurrentSegment = (keep = 1) => {
+      const blob = currentSegmentBlob();
+      if (!blob || !blob.size) { recordChunks = []; recordBytes = 0; return; }
+      recordSegments.push({ blob, bytes: blob.size, startedAt: segmentStartedAt, endedAt: Date.now() });
+      recordSegments = recordSegments.slice(-Math.max(1, keep));
       recordChunks = [];
       recordBytes = 0;
+    };
+    const bufferedBytes = () => recordSegments.reduce((sum, segment) => sum + segment.bytes, recordBytes);
+    const hasBufferedRecording = () => recordSegments.length > 0 || recordChunks.length > 0;
+    const resetSegmentBuffer = () => {
+      recordSegments = [];
+      recordChunks = [];
+      recordBytes = 0;
+      segmentStartedAt = 0;
     };
     const stopRecording = (message) => {
       clearRecordRestore();
       recordElapsedSeconds = recordStartedAt ? (Date.now() - recordStartedAt) / 1000 : recordElapsedSeconds;
-      const hadChunks = recordChunks.length > 0;
+      if (segmentTimer) { clearInterval(segmentTimer); segmentTimer = null; }
+      const finishStop = () => {
+        const hadChunks = hasBufferedRecording();
+        recorder = null;
+        if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
+        stopRecordTracks();
+        updateRecordUi();
+        setRecordStatus(message || (hadChunks ? '录屏已停止；仍可点 15s/30s/60s 保存已缓存片段。' : '录屏已停止。'));
+      };
       if (recorder && recorder.state !== 'inactive') {
-        try { recorder.stop(); } catch (e) { /* ignore */ }
+        const oldRecorder = recorder;
+        oldRecorder.onstop = () => {
+          pushCurrentSegment(MAX_SEGMENTS);
+          finishStop();
+        };
+        try { oldRecorder.stop(); } catch (e) { pushCurrentSegment(MAX_SEGMENTS); finishStop(); }
+      } else {
+        pushCurrentSegment(MAX_SEGMENTS);
+        finishStop();
       }
-      recorder = null;
-      if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
-      stopRecordTracks();
-      updateRecordUi();
-      setRecordStatus(message || (hadChunks ? '录屏已停止；仍可点 15s/30s/60s 保存已缓存片段。' : '录屏已停止。'));
     };
     const startRecorderOnStream = () => {
+      if (!recordStream) return;
       const mimeType = pickBufferMime();
       recorder = new MediaRecorder(recordStream, { mimeType, videoBitsPerSecond: 2500000 });
-      recorder.recordMimeType = mimeType;
       recorder.ondataavailable = (event) => {
         if (!event.data || !event.data.size) return;
         recordChunks.push(event.data);
         recordBytes += event.data.size;
         updateRecordUi();
-        if (recordBytes > REC_MAX_BYTES) {
-          stopRecording('录像缓存超过 300MB，已自动停止；请先点 15s/30s/60s 保存，或重新开始录屏。');
+        if (bufferedBytes() > REC_MAX_BYTES) {
+          stopRecording('录像缓存超过上限，已自动停止；请先保存或重新开始录屏。');
         }
       };
       recorder.onerror = (event) => {
@@ -1096,6 +1127,26 @@
       };
       recorder.start(1000);
       updateRecordUi();
+    };
+    const rotateRecordingSegment = async () => {
+      if (!recordStream || !recorder || recorder.state !== 'recording' || saveBusy || rotating) return;
+      rotating = true;
+      try {
+        const oldRecorder = recorder;
+        recorder = null;
+        if (oldRecorder.state !== 'inactive') {
+          await new Promise((resolve) => {
+            oldRecorder.onstop = resolve;
+            try { oldRecorder.stop(); } catch (e) { resolve(); }
+          });
+        }
+        pushCurrentSegment(1);
+        if (!recordStream) { updateRecordUi(); return; }
+        segmentStartedAt = Date.now();
+        startRecorderOnStream();
+      } finally {
+        rotating = false;
+      }
     };
     const acquireRecordStream = async (allowDisplay = true) => {
       // 优先直接录页面里的 canvas（游戏画面），不需要选择窗口，也不会录到面板
@@ -1127,12 +1178,15 @@
         const acquired = await acquireRecordStream(!options.auto);
         recordStream = acquired.stream;
         recordSource = acquired.source;
-        resetRecordBuffer();
+        resetSegmentBuffer();
         recordElapsedSeconds = 0;
         recordStartedAt = Date.now();
+        segmentStartedAt = Date.now();
         startRecorderOnStream();
         if (recordTimer) clearInterval(recordTimer);
         recordTimer = setInterval(updateRecordUi, 1000);
+        if (segmentTimer) clearInterval(segmentTimer);
+        segmentTimer = setInterval(() => rotateRecordingSegment(), SEGMENT_MS);
         setRecordStatus(recordLiveText(), 'warn');
         showToast(`${options.auto ? '已自动开始录屏' : '开始录屏'}：${recordSource}`);
       } catch (error) {
@@ -1154,11 +1208,11 @@
     const maybeAutoStartRecording = () => {
       if (!settings.autoRecord) return;
       if (!pluginActive()) return;
-      if (recordActive() || recordChunks.length) return;
+      if (recordActive() || hasBufferedRecording()) return;
       if (autoStartTimer) { clearTimeout(autoStartTimer); autoStartTimer = null; }
       let tries = 0;
       const attempt = () => {
-        if (!settings.autoRecord || recordActive() || recordChunks.length) return;
+        if (!settings.autoRecord || recordActive() || hasBufferedRecording()) return;
         if (!pluginActive()) return;
         const canvases = Array.from(document.querySelectorAll('canvas')).filter((canvas) => canvas.width > 0 && canvas.height > 0 && typeof canvas.captureStream === 'function');
         if (canvases.length) {
@@ -1215,58 +1269,50 @@
       try { video.currentTime = 1e101; } catch (e) { finish(0); }
       setTimeout(() => finish(video.duration), 2500);
     });
-    const trimRecordClip = async (blob, seconds, onProgress, availableSeconds = 0) => {
-      const url = URL.createObjectURL(blob);
-      const video = document.createElement('video');
-      video.src = url;
-      video.muted = true;
-      video.playsInline = true;
-      video.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;';
-      document.body.appendChild(video);
-      const cleanup = () => {
-        try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ }
-        video.remove();
-      };
-      try {
+    const trimRecordSegments = async (blobs, seconds, onProgress) => {
+      const resources = [];
+      const loadSegment = async (blob) => {
+        const url = URL.createObjectURL(blob);
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;';
+        document.body.appendChild(video);
         await new Promise((resolve, reject) => {
           let attempt = 0;
           const tryLoad = () => {
             attempt += 1;
             video.onloadedmetadata = () => resolve();
             video.onerror = () => {
-              const code = video.error && video.error.code;
-              const detail = video.error && video.error.message;
               if (attempt < 2) {
                 setTimeout(() => {
-                  try {
-                    video.removeAttribute('src');
-                    video.load();
-                    video.src = url;
-                  } catch (e) { /* ignore */ }
+                  try { video.removeAttribute('src'); video.load(); video.src = url; } catch (e) { /* ignore */ }
                   tryLoad();
                 }, 300);
                 return;
               }
-              reject(new Error(`无法读取录像数据（code=${code || '?'}${detail ? '，' + detail : ''}，blob=${blob.size}B，chunks=${recordChunks.length}）`));
+              const code = video.error && video.error.code;
+              reject(new Error(`无法读取录像数据（code=${code || '?'}）`));
             };
             video.src = url;
             video.load();
           };
           tryLoad();
         });
-        const duration = await getVideoDuration(video);
-        // 部分 MediaRecorder 产物 duration 元数据不准；用实际录制时长校正
-        const durationLooksWrong = !Number.isFinite(duration) || duration <= 0 || (availableSeconds > 3 && duration < Math.min(availableSeconds * 0.5, availableSeconds - 2));
-        const clipSeconds = Math.max(1, Math.min(seconds, durationLooksWrong ? (availableSeconds || seconds) : duration));
-        video.currentTime = durationLooksWrong ? 0 : duration > clipSeconds ? duration - clipSeconds : 0;
-        await new Promise((resolve) => {
-          let done = false;
-          const finishSeek = () => { if (done) return; done = true; resolve(); };
-          video.onseeked = finishSeek;
-          setTimeout(finishSeek, 1500);
-        });
-        const width = video.videoWidth || 1280;
-        const height = video.videoHeight || 720;
+        let duration = await getVideoDuration(video);
+        if (!Number.isFinite(duration) || duration <= 0) duration = 0.1;
+        return { video, url, duration };
+      };
+      try {
+        for (const blob of blobs) {
+          if (blob && blob.size > 0) resources.push(await loadSegment(blob));
+        }
+        if (!resources.length) throw new Error('没有可用的录像分段');
+        const totalDuration = resources.reduce((sum, segment) => sum + segment.duration, 0);
+        const clipSeconds = Math.max(1, Math.min(seconds, totalDuration || seconds));
+        const startAt = Math.max(0, totalDuration - clipSeconds);
+        const width = resources[0].video.videoWidth || 1280;
+        const height = resources[0].video.videoHeight || 720;
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -1277,27 +1323,49 @@
         const clipChunks = [];
         clipRecorder.ondataavailable = (event) => { if (event.data && event.data.size) clipChunks.push(event.data); };
         clipRecorder.start(500);
-        let frameHandle = null;
+        let activeVideo = null;
         let drawing = true;
+        let frameHandle = null;
         const drawFrame = () => {
           if (!drawing) return;
           try {
-            if (video.readyState >= 2) context2d.drawImage(video, 0, 0, width, height);
+            if (activeVideo && activeVideo.readyState >= 2) context2d.drawImage(activeVideo, 0, 0, width, height);
           } catch (e) { /* ignore */ }
           frameHandle = requestAnimationFrame(drawFrame);
         };
         drawFrame();
-        await video.play().catch(() => { /* ignore */ });
-        const startedAt = performance.now();
-        await new Promise((resolve) => {
-          const tick = () => {
-            const elapsed = (performance.now() - startedAt) / 1000;
-            if (onProgress) onProgress(elapsed, clipSeconds);
-            if (elapsed >= clipSeconds || video.ended) { resolve(); return; }
-            setTimeout(tick, 200);
-          };
-          setTimeout(tick, 200);
-        });
+        const trimStartedAt = performance.now();
+        let remaining = clipSeconds;
+        let skip = startAt;
+        for (const segment of resources) {
+          if (remaining <= 0.02) break;
+          if (skip >= segment.duration) { skip -= segment.duration; continue; }
+          const offset = Math.max(0, skip);
+          skip = 0;
+          const playFor = Math.min(segment.duration - offset, remaining);
+          if (playFor <= 0.02) continue;
+          segment.video.currentTime = Math.max(0, Math.min(offset, segment.duration - 0.05));
+          await new Promise((resolve) => {
+            let done = false;
+            const finishSeek = () => { if (done) return; done = true; resolve(); };
+            segment.video.onseeked = finishSeek;
+            setTimeout(finishSeek, 1500);
+          });
+          activeVideo = segment.video;
+          await segment.video.play().catch(() => { /* ignore */ });
+          const segmentStarted = performance.now();
+          await new Promise((resolve) => {
+            const tick = () => {
+              const segmentElapsed = (performance.now() - segmentStarted) / 1000;
+              if (onProgress) onProgress((performance.now() - trimStartedAt) / 1000, clipSeconds);
+              if (segmentElapsed >= playFor || segment.video.ended) { resolve(); return; }
+              setTimeout(tick, 100);
+            };
+            setTimeout(tick, 100);
+          });
+          segment.video.pause();
+          remaining -= playFor;
+        }
         drawing = false;
         if (frameHandle) cancelAnimationFrame(frameHandle);
         await new Promise((resolve) => {
@@ -1305,16 +1373,18 @@
           try { clipRecorder.stop(); } catch (e) { resolve(); }
         });
         try { captureStream.getTracks().forEach((track) => track.stop()); } catch (e) { /* ignore */ }
-        cleanup();
         return new Blob(clipChunks, { type: mimeType });
-      } catch (error) {
-        cleanup();
-        throw error;
+      } finally {
+        resources.forEach((segment) => {
+          try { segment.video.pause(); } catch (e) { /* ignore */ }
+          try { URL.revokeObjectURL(segment.url); } catch (e) { /* ignore */ }
+          segment.video.remove();
+        });
       }
     };
     const saveRecordClip = async (seconds) => {
       if (saveBusy) return;
-      if (!recordChunks.length) {
+      if (!hasBufferedRecording()) {
         setRecordStatus('还没有录像缓存，请先点「开始录屏」。', 'err');
         showToast('还没有录像缓存，请先开始录屏');
         return;
@@ -1359,10 +1429,13 @@
         setRecordStatus('正在准备录像数据…（录制继续）');
         await requestRecorderData();
       }
-      const availableSeconds = recordActive() ? (Date.now() - recordStartedAt) / 1000 : recordElapsedSeconds;
-      const mimeType = (recordChunks[0] && recordChunks[0].type) || 'video/webm';
-      const blob = new Blob(recordChunks, { type: mimeType });
-      if (blob.size < 1024) {
+      const segmentBlobs = recordSegments.map((segment) => segment.blob);
+      if (recordChunks.length) {
+        const currentBlob = currentSegmentBlob();
+        if (currentBlob && currentBlob.size) segmentBlobs.push(currentBlob);
+      }
+      const totalBytes = segmentBlobs.reduce((sum, blob) => sum + (blob.size || 0), 0);
+      if (!segmentBlobs.length || totalBytes < 1024) {
         saveBusy = false;
         updateRecordUi();
         setRecordStatus('录像数据还在写入，请等 2~3 秒后再点保存。', 'warn');
@@ -1373,10 +1446,10 @@
       setRecordStatus(`正在生成点击前 ${seconds} 秒视频…${savingWhileRecording ? '（录制继续）' : ''}`);
       try {
         let actualSeconds = seconds;
-        const clip = await trimRecordClip(blob, seconds, (elapsed, total) => {
+        const clip = await trimRecordSegments(segmentBlobs, seconds, (elapsed, total) => {
           actualSeconds = total;
           setRecordStatus(`正在生成点击前 ${seconds} 秒视频… ${Math.min(Math.floor(total), Math.floor(elapsed))}/${Math.floor(total)}s${savingWhileRecording ? '（录制继续）' : ''}`);
-        }, availableSeconds);
+        });
         const actualClipSeconds = Math.max(1, Math.round(actualSeconds));
         const shortNote = actualClipSeconds < seconds ? `（录像不足 ${seconds} 秒，按实际 ${actualClipSeconds} 秒导出）` : '';
         const clipMime = (clip && clip.type) || mimeType;
@@ -1694,7 +1767,7 @@
 
     window.__gameToolPanel = {
       getReplayCount: () => replayCount,
-      getRecordState: () => ({ active: recordActive(), chunks: recordChunks.length, bytes: recordBytes, source: recordSource }),
+      getRecordState: () => ({ active: recordActive(), chunks: recordChunks.length, bytes: recordBytes, segments: recordSegments.length, segmentsBytes: recordSegments.reduce((sum, segment) => sum + segment.bytes, 0), source: recordSource }),
       settings,
       presets: NETWORK_PRESETS,
       applyPreset,
